@@ -20,7 +20,8 @@ export function reviewWindowClass() {
    const body=node('div',null,'ts-body'), rail=node('div',null,'ts-rail'), list=node('div',null,'ts-list'), pagination=node('nav',null,'ts-pagination'), detail=node('section',null,'ts-detail');
    detail.setAttribute('aria-label',t('UI.Details'));
    const footer=node('footer',null,'ts-footer'), summary=node('span'), actions=node('div',null,'ts-actions');
-   const button=(key,action)=>{const b=node('button',t(key));b.type='button';b.onclick=async()=>{if(busy)return;busy=true;error.textContent='';refreshActions();try{await action();}catch(e){if(e.code==='preview-stale'){resetPreview();load();}error.textContent=t('Grouping.Error',{message:game.i18n.has?.(`TRUESIGHT.Error.${e.code}`)?t(`Error.${e.code}`):e.message});}finally{busy=false;render();}};return b;};
+   const ruleEvidence=new Map();
+   const button=(key,action)=>{const b=node('button',t(key));b.type='button';b.onclick=async()=>{if(busy)return;const focusKey=document.activeElement===b?b.getAttribute?.('data-ts-focus'):null;busy=true;error.textContent='';refreshActions();try{await action();}catch(e){if(e.code==='preview-stale'){resetPreview();load();}error.textContent=t('Grouping.Error',{message:game.i18n.has?.(`TRUESIGHT.Error.${e.code}`)?t(`Error.${e.code}`):e.message});}finally{busy=false;render();if(focusKey)[...(root.querySelectorAll?.('[data-ts-focus]')??[])].find(el=>el.getAttribute('data-ts-focus')===focusKey)?.focus({preventScroll:true});}};return b;};
    const risk=node('input');risk.type='checkbox';risk.checked=catalog.getStatus().includeRisk;
    const options=node('details',null,'ts-options'), optionLabel=node('label');optionLabel.append(risk,node('span',t('Grouping.IncludeRisk')));const optionMenu=node('div',null,'ts-menu');optionMenu.append(optionLabel);options.append(node('summary',t('UI.Options')),optionMenu);
    const resetPreview=()=>{preview=null;mode='current';filter='all';page=0;selected=null;};
@@ -60,7 +61,7 @@ export function reviewWindowClass() {
       for(const [index,side] of (row.sides??[row.members]).entries()){if(row.sides)detail.append(node('h3',t('Names.Side',{number:index+1})));for(const id of side)detail.append(member(id));}
       detail.append(button('Names.Revoke',()=>{preview=catalog.previewNameDecision({kind:'revoke',key:row.key});mode='preview';filter='names';page=0;selected=null;pairOffset=0;render();}));return;
     }
-    if(row?.nameReview){renderNameSet({row,detail,view,previewId:mode==='preview'?preview?.id:undefined,catalog,t,node,button,member,pairOffset,drafts:nameDrafts,
+    if(row?.nameReview){renderNameSet({row,detail,view,previewId:mode==='preview'?preview?.id:undefined,catalog,t,node,button,member,pairOffset,drafts:nameDrafts,ruleEvidence,
       onPairPage:offset=>{pairOffset=offset;render();},onDecision:request=>{
         preview=catalog.previewNameDecision(request);mode='preview';filter='names';page=0;selected=null;pairOffset=0;render();
       }});return;}
@@ -106,7 +107,7 @@ export function reviewWindowClass() {
    search.oninput=()=>{page=0;selected=null;render();};risk.onchange=()=>{if(preview){resetPreview();render();error.textContent=t('UI.Stale');}};
    rail.append(list,pagination);body.append(rail,detail);actions.append(discard,apply);footer.append(summary,actions);root.append(toolbar,message,search,filters,reason,error,body,footer);
    if(this.reviewHook)Hooks.off('truesightChanged',this.reviewHook);
-   this.reviewHook=Hooks.on('truesightChanged',change=>{if(!catalog.getStatus().canManage){void this.close();return;}const invalid=catalog.affects(change,['identity','access','review','sources','publication'])||Boolean(preview?.decision&&catalog.affects(change,['names']));const stale=invalid&&Boolean(preview);if(invalid)nameDrafts.clear();if(invalid&&preview)resetPreview();if(change.reason==='review-reset')error.textContent='';load();if(stale&&!busy)error.textContent=t('UI.Stale');});
+   this.reviewHook=Hooks.on('truesightChanged',change=>{ruleEvidence.clear();if(!catalog.getStatus().canManage){void this.close();return;}const invalid=catalog.affects(change,['identity','access','review','sources','publication'])||Boolean(preview?.decision&&catalog.affects(change,['names']));const stale=invalid&&Boolean(preview);if(invalid)nameDrafts.clear();if(invalid&&preview)resetPreview();if(change.reason==='review-reset')error.textContent='';load();if(stale&&!busy)error.textContent=t('UI.Stale');});
    for(const menu of [options,more])menu.ontoggle=()=>{if(menu.open)for(const other of [options,more])if(other!==menu)other.open=false;};
    root.addEventListener?.('click',event=>{if(!event.target.closest('.ts-options')){options.open=false;more.open=false;}});
    root.addEventListener?.('keydown',event=>{if(event.key==='Escape'&&(options.open||more.open)){const menu=options.open?options:more;menu.open=false;menu.querySelector('summary').focus();event.stopPropagation();}});

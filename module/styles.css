@@ -113,3 +113,12 @@
 .truesight-review .ts-review textarea { width:100%; min-height:58px; resize:vertical; color:var(--ts-text); background:var(--ts-field); border:1px solid var(--ts-line); border-radius:5px; font:inherit; }
 .truesight-review .ts-review textarea:focus-visible { outline:2px solid var(--ts-focus); outline-offset:2px; }
 .truesight-review .ts-decision-preview { display:flex; flex-direction:column; gap:6px; }
+
+.truesight-review .ts-rule-evidence { margin-block: .5rem; }
+.truesight-review .ts-rule-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 22rem; overflow: auto; }
+.truesight-review .ts-rule-comparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: .6rem; }
+.truesight-review .ts-rule-comparison > section { min-width: 0; }
+
+.truesight-review .ts-rule-evidence h4,
+.truesight-review .ts-rule-comparison h4 { font:600 13px/1.4 var(--font-body, sans-serif); margin:5px 0; border:0; overflow-wrap:anywhere; }
+.truesight-review .ts-rule-text { font-size:12px; line-height:1.5; margin:6px 0; }

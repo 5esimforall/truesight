@@ -15,6 +15,7 @@ export const catalog = Object.freeze({
   whenReady: options => current().whenReady(options),
   read: uuids => current().read(uuids),
   getMember: uuid => current().getMember(uuid),
+  loadRuleEvidence: uuids => current().loadRuleEvidence(uuids),
   readNameDecisions: () => current().readNameDecisions(),
   readNameReview: options => current().readNameReview(options),
   readNameSet: (key, options) => current().readNameSet(key, options),

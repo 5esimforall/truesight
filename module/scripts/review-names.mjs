@@ -1,8 +1,27 @@
 /** Render diagnostic name relationships without changing reviewed membership. */
-export function renderNameSet({row,detail,view,previewId,catalog,t,node,button,member,onDecision,drafts,pairOffset=0,onPairPage}) {
+export function renderNameSet({row,detail,view,previewId,catalog,t,node,button,member,onDecision,drafts,pairOffset=0,onPairPage,ruleEvidence=new Map()}) {
   const set=catalog.readNameSet(row.key,{previewId,offset:pairOffset});
   const format=value=>value==null||value===''?t('Names.Unknown'):typeof value==='object'?JSON.stringify(value):String(value);
   const label=id=>`${set.members.indexOf(id)+1}. ${view.entries.get(id)?.names?.[0]??id}`;
+  const loadRules=async ids=>{
+    const generation=catalog.getStatus().generation;
+    const values=await catalog.loadRuleEvidence(ids);
+    if(catalog.getStatus().generation===generation)for(const value of values)ruleEvidence.set(value.uuid,value);
+  };
+  const ruleContent=(id,{load=true}={})=>{
+    const rules=node('section',null,'ts-rule-evidence'),content=ruleEvidence.get(id);
+    if(load){const control=button('Names.LoadRules',()=>loadRules([id]));control.setAttribute('data-ts-focus','rules:'+id);rules.append(control);}
+    if(!content)return rules;
+    rules.append(node('h4',t('Names.RuleContent')));
+    if(content.status!=='ready')rules.append(node('p',t('Names.RulesUnavailable')));
+    else {
+      rules.append(node('pre',content.text||t('Names.NoRuleText'),'ts-rule-text'));
+      if(content.provider){const trace=node('details',null,'ts-technical');trace.append(node('summary',t('UI.Technical')),node('p',t('Names.ProviderTrace',{provider:content.provider.provider,owner:content.provider.ownerName,source:content.provider.source,uid:content.provider.uid})));rules.append(trace);}
+      if(content.usage)rules.append(node('h4',t('Names.UsageConfig')),node('pre',JSON.stringify(content.usage,null,2),'ts-rule-text'));
+      for(const progression of content.progressions)rules.append(node('p',t('Names.ScaleSource',{name:progression.name,uuid:progression.uuid})),node('pre',JSON.stringify(progression.scale,null,2),'ts-rule-text'));
+    }
+    return rules;
+  };
   detail.append(node('h2',row.name),node('p',t('Names.Matches',{names:set.matches.join(' / ')})),
     node('p',t('Names.SetSummary',{entries:set.entryCount,groups:set.groupCount})),node('p',t('Names.Hint'),'ts-name-hint'));
   const clues=[...set.differences.map(field=>t('Names.Field.'+field)),...set.warnings.map(code=>t('Grouping.Review.'+code))];
@@ -25,7 +44,7 @@ export function renderNameSet({row,detail,view,previewId,catalog,t,node,button,m
       const concise=['requirements','level','school'].filter(field=>evidence.fields[field]!=null&&evidence.fields[field]!=='').map(field=>`${t('Names.Field.'+field)}: ${format(evidence.fields[field])}`);
       if(concise.length)card.append(node('p',concise.join(' · ')));
       if(evidence.warning)card.append(node('p',t('Grouping.Review.'+evidence.warning),'ts-risk'));
-      section.append(card);
+      card.append(ruleContent(id));section.append(card);
     }
     sections.push(section);
   }
@@ -34,6 +53,15 @@ export function renderNameSet({row,detail,view,previewId,catalog,t,node,button,m
     const section=node('section',null,'ts-name-pair');
     section.append(node('p',`${label(pair.left)} ↔ ${label(pair.right)}`),node('p',t('Names.Basis.'+pair.basis)));
     const refs=node('details',null,'ts-technical');refs.append(node('summary',t('Names.PairEntries')),node('code',pair.left),node('code',pair.right));section.append(refs);
+    const compare=button('Names.CompareRules',()=>loadRules([pair.left,pair.right]));compare.setAttribute('data-ts-focus','compare:'+JSON.stringify([pair.left,pair.right]));section.append(compare);
+    if(ruleEvidence.has(pair.left)&&ruleEvidence.has(pair.right)) {
+      section.append(node('p',t('Names.RuleHint'),'ts-name-hint'));
+      const comparison=node('div',null,'ts-rule-comparison');
+      for(const id of [pair.left,pair.right]) {
+        const column=node('section');column.append(node('h4',label(id)),ruleContent(id,{load:false}));comparison.append(column);
+      }
+      section.append(comparison);
+    }
     if(pair.reason)section.append(node('p',pair.reason));
     if(pair.clues.length) {
       const clues=node('ul',null,'ts-name-clues');

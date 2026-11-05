@@ -21,7 +21,7 @@ test('review opens current state without calculating, previews explicitly, and a
  const service=fixture();let calculations=0;const calculate=service.preview.bind(service);service.preview=(...args)=>{calculations++;return calculate(...args);};connectCatalog(service);
  const Window=reviewWindowClass(),root=await new Window()._renderHTML();
  assert.equal(root.children[0].children[0].className,'ts-tabs');
- const find=key=>descendants(root).find(n=>n.tag==='button'&&n.textContent==='TRUESIGHT.'+key);
+ const find=key=>descendants(root).find(n=>n.tag==='button'&&n.textContent.startsWith('TRUESIGHT.'+key));
  assert.equal(descendants(root).find(n=>n.className==='ts-message').textContent,'');
  assert.equal(calculations,0);assert.equal(find('UI.Apply').hidden,true);
  await find('UI.Recalculate').onclick();assert.equal(calculations,1);assert.equal(service.getStatus().reviewed,false);assert.equal(find('UI.Apply').hidden,false);
@@ -66,4 +66,20 @@ test('same-name UI retains clues, requires reasons, previews without publishing 
  await find('UI.Apply').onclick();assert.equal(service.state.active.decisions.length,1);assert.equal(service.state.active.decisions[0].kind,'different');
  await find('Names.Decisions').onclick();assert.ok(find('Names.Revoke'));
  await find('Names.Revoke').onclick();assert.equal(service.state.active.decisions.length,1);await find('UI.Apply').onclick();assert.equal(service.state.active.decisions.length,0);
+});
+
+test('rule comparison loads only the selected pair and clears displayed evidence on change',async t=>{
+ const keys=['game','document','foundry','Hooks'],before=Object.fromEntries(keys.map(k=>[k,globalThis[k]]));t.after(()=>Object.assign(globalThis,before));
+ globalThis.game={i18n:{localize:k=>k}};globalThis.document={createElement:t=>new Element(t)};
+ globalThis.foundry={applications:{api:{ApplicationV2:class{}}}};let hook;globalThis.Hooks={on:(_event,fn)=>{hook=fn;return 1;},off(){}};
+ const service=fixture(),requested=[];service.loadRuleEvidence=async ids=>{requested.push(ids);return ids.map((uuid,i)=>({uuid,status:'ready',text:i?'Twice at level 18':'Twice at level 13',usage:{max:i?'2':'3'},progressions:[]}));};
+ connectCatalog(service);const root=await new (reviewWindowClass())()._renderHTML();
+ const find=key=>descendants(root).find(n=>n.tag==='button'&&n.textContent.startsWith('TRUESIGHT.'+key));
+ await find('UI.Filter.names').onclick();assert.equal(requested.length,0);
+ await find('Names.CompareRules').onclick();assert.equal(requested.length,1);assert.equal(requested[0].length,2);
+ const comparison=descendants(root).find(n=>n.className==='ts-rule-comparison');assert.ok(comparison);
+ assert.ok(descendants(comparison).some(n=>n.textContent==='Twice at level 13'));
+ assert.ok(descendants(comparison).some(n=>n.textContent==='Twice at level 18'));
+ assert.equal(service.state.active,null,'reading never publishes review');
+ hook({changes:['display']});assert.equal(descendants(root).some(n=>n.className==='ts-rule-comparison'),false);
 });

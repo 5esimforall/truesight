@@ -1,7 +1,8 @@
 import {describeGroupingIndex, buildDescribedGroupingCatalog, calculateDescribedGrouping, canonicalUuid, groupingDiff, GROUP_RULE_VERSION} from './identity.mjs';
-import {identifySource, prepareSourceEnvironment} from './source-resolution.mjs';
+import {prepareSourceEnvironment} from './source-resolution.mjs';
 import {emptyReview, readReview, mergeReviewSnapshot} from './state.mjs';
 import {buildNameSets, nameSetPairs, decisionEvidence, decisionCurrent, comparePair, compareRelationship, applyNameDecisions, comparisonFields} from './name-review.mjs';
+import {readRuleEvidence} from './rule-evidence.mjs';
 import {ALL_CHANGES, affects} from '../changes.mjs';
 
 export class CatalogError extends Error {
@@ -182,7 +183,7 @@ export class CatalogService {
   }
 
   read(uuids) {
-    const {status, environment, data} = this.current();
+    const {status, data} = this.current();
     const wanted = uuids ? new Set(uuids.map(uuid => canonicalUuid(uuid))) : null;
     const entries = new Map(), groups = new Map();
     // Construct a public DTO, never return a Quick Insert item, document,
@@ -200,7 +201,7 @@ export class CatalogService {
         names: [...entry.names], tags: [...entry.tags], srd: entry.srd,
         reason: group?.reason ?? entry.reason,
         evidence: {identifier: entry.id, level: entry.level, school: entry.school,
-          context: structuredClone(entry.context), source: identifySource(entry.result.item, environment)}
+          context: structuredClone(entry.context), source: entry.source, provider: structuredClone(entry.trace??null)}
       });
       if (entry.key && !groups.has(entry.key)) groups.set(entry.key, {
         key: entry.key, kind: entry.kind, rules: entry.rules, reason: group.reason,
@@ -244,6 +245,22 @@ export class CatalogService {
     if(!set)throw new CatalogError('name-set-unavailable');
     return structuredClone({...set,...nameSetPairs(set,described,keys,decisions,{offset,limit}),
       evidence:Object.fromEntries(set.members.map(id=>{const e=described.get(id);return [id,{names:e.nameEvidence,fields:comparisonFields(e),warning:e.warning}];}))});
+  }
+
+  async loadRuleEvidence(uuids) {
+    this.assertManager();
+    if(!Array.isArray(uuids)||!uuids.length||uuids.length>50||uuids.some(id=>typeof id!=='string'))throw new CatalogError('invalid-options');
+    const ids=[...new Set(uuids.map(canonicalUuid))],before=this.current(),generation=this.generation;
+    if(ids.some(id=>!before.described.has(id)))throw new CatalogError('name-set-unavailable');
+    const results=await Promise.all(ids.map(async id=>{
+      try{return await readRuleEvidence(before.described.get(id),before.environment,before.described);}
+      catch{return {uuid:id,status:'unavailable'};}
+    }));
+    this.assertManager();
+    const after=this.current();
+    const evidenceIds=new Set([...ids,...results.flatMap(result=>(result.progressions??[]).map(p=>p.uuid))]);
+    if(generation!==this.generation||[...evidenceIds].some(id=>!after.described.has(id)||after.described.get(id).fingerprint!==before.described.get(id).fingerprint))throw new CatalogError('preview-stale');
+    return structuredClone(results);
   }
 
   readNameDecisions() {

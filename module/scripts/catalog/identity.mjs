@@ -59,9 +59,11 @@ function originalName(item, entry) {
   return candidate&&slug(candidate)===item.system?.identifier?text(candidate):"";
 }
 function describe(result, environment) {
-  const item=result.item,uuid=canonicalUuid(item),source=identifySource(item,environment),indexed=indexEntry(item,environment);
-  const system={...item.system,...indexed.system},type=item.subType;
-  const id=identifier(system.identifier),name=originalName(item,indexed);
+  const item=result.item,uuid=canonicalUuid(item),external=environment.externalIdentities?.get(uuid),
+    supplied=external?.status==='ready'?external:null,indexed=indexEntry(item,environment);
+  const system={...item.system,...indexed.system},type=supplied?.type??item.subType;
+  const source=identifySource(supplied?{uuid:item.uuid,source:item.source,system:{...system,source:{...system.source,rules:supplied.rules,page:supplied.page}}}:item,environment);
+  const id=supplied?.identifier??identifier(system.identifier),name=supplied?.originalName??originalName(item,indexed);
   const suffix=name.match(/^(.+?)\s+\(([^()]+)\)$/);
   let base=nameKey(name),suffixBook=null;
   if(suffix) {
@@ -71,7 +73,9 @@ function describe(result, environment) {
     if(matched.length===1){base=nameKey(suffix[1]);suffixBook=matched[0].id;}
   }
   const spell=(!environment.system?.id||environment.system.id==="dnd5e")&&item.documentType==="Item"&&item.subType==="spell";
-  const warning=source.status==="edition-conflict"?"edition":source.status==="source-conflict"?"source":
+  const suppliedConflict=supplied&&((system.identifier&&system.identifier!==supplied.identifier)||(item.subType&&item.subType!==supplied.type));
+  const suppliedEdition=supplied&&['2014','2024'].includes(system.source?.rules)&&system.source.rules!==supplied.rules;
+  const warning=suppliedEdition?'edition':suppliedConflict?'context-conflict':external&&!supplied?external.warning:source.status==="edition-conflict"?"edition":source.status==="source-conflict"?"source":
     !spell?null:!source.rules?"rules":!id?"identifier":
     !Number.isInteger(system.level)||system.level<0||system.level>9||!["abj","con","div","enc","evo","ill","nec","trs"].includes(system.school)?"spell":null;
   const fingerprint=JSON.stringify([item.documentType,item.subType,id,source.rules,system.level??null,system.school??null,
@@ -79,7 +83,7 @@ function describe(result, environment) {
   const nameFingerprint=JSON.stringify([base,suffixBook]);
   const automated=Boolean(indexed.flags?.["chris-premades"]?.info?.identifier || indexed.flags?.["gambits-premades"]?.gpsUuid);
   return {result,uuid,spell,id,rules:source.rules,level:system.level,school:system.school,warning,fingerprint,nameFingerprint,
-    type,system,nameEvidence:nameEvidence(item,indexed,name,id),documentType:item.documentType,sourceConflict:["edition-conflict","source-conflict"].includes(source.status),
+    type,system,source,externalContext:supplied?.context,trace:supplied?.trace,nameEvidence:nameEvidence(item,supplied?{...indexed,originalName:name}:indexed,name,id),documentType:item.documentType,sourceConflict:Boolean(suppliedEdition)||["edition-conflict","source-conflict"].includes(source.status),
     origin:text(indexed._stats?.compendiumSource ?? item._stats?.compendiumSource),
     base,suffixBook,names:[item.name,name].filter(Boolean),tags:automated?["automation"]:[],srd:isSrdSource(item,environment),key:null,risk:null,kind:null};
 }
@@ -94,7 +98,7 @@ export function describeGroupingIndex(results, environment={}) {
     const knownDocument=entry.documentType==='Item'||DOCUMENT_TYPES.includes(entry.documentType)
       || Object.hasOwn(environment.system?.documentTypes??{},entry.documentType);
     const isItem=entry.documentType==='Item'&&(!environment.system?.id||environment.system.id==='dnd5e');
-    const identity=isItem?itemContext(entry,owners,environment):{context:{documentType:entry.documentType,type:entry.type??null}};
+    const identity=isItem?(entry.externalContext?{context:entry.externalContext}:itemContext(entry,owners,environment)):{context:{documentType:entry.documentType,type:entry.type??null}};
     entry.warning=entry.warning||(!knownDocument||identity.warning==='unknown-type'?'unknown-type':isItem&&!entry.rules?'rules':isItem&&!entry.id?'identifier':identity.warning??null);
     entry.context=identity.context??null;
     const origin=canonicalUuid({uuid:entry.origin,documentType:entry.documentType});

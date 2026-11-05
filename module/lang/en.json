@@ -221,5 +221,17 @@
   "TRUESIGHT.Names.Members": "Entries and existing groups",
   "TRUESIGHT.Names.Side": "Side {number}",
   "TRUESIGHT.Names.Clues": "Review clues: {clues}",
-  "TRUESIGHT.Names.AllAffectedClues": "Differences and conflicts across all affected entries"
+  "TRUESIGHT.Names.AllAffectedClues": "Differences and conflicts across all affected entries",
+  "TRUESIGHT.Grouping.Review.provider-loading": "Provider identity is loading",
+  "TRUESIGHT.Grouping.Review.provider-unavailable": "Provider identity is unavailable",
+  "TRUESIGHT.Grouping.Review.provider-identity": "Missing or conflicting provider identity",
+  "TRUESIGHT.Names.LoadRules": "Load rule content",
+  "TRUESIGHT.Names.RuleContent": "Rule content and evidence",
+  "TRUESIGHT.Names.RulesUnavailable": "Rule content is unavailable; the original item behavior is preserved.",
+  "TRUESIGHT.Names.NoRuleText": "This entry provides no rule text.",
+  "TRUESIGHT.Names.RuleHint": "Compare uses, recovery conditions and progression in the rule text. Different wording, translations or automation settings alone do not establish different rules.",
+  "TRUESIGHT.Names.UsageConfig": "Implementation settings (not rule text)",
+  "TRUESIGHT.Names.ProviderTrace": "Identity source: {provider} · {owner} · {source} · {uid}",
+  "TRUESIGHT.Names.ScaleSource": "Progression source: {name} · {uuid}",
+  "TRUESIGHT.Names.CompareRules": "Compare rule content"
 }

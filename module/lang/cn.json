@@ -221,5 +221,17 @@
   "TRUESIGHT.Names.Members": "条目与现有分组",
   "TRUESIGHT.Names.Side": "第 {number} 方",
   "TRUESIGHT.Names.Clues": "核对线索：{clues}",
-  "TRUESIGHT.Names.AllAffectedClues": "全部受影响成员的差异与冲突"
+  "TRUESIGHT.Names.AllAffectedClues": "全部受影响成员的差异与冲突",
+  "TRUESIGHT.Grouping.Review.provider-loading": "正在读取提供方身份",
+  "TRUESIGHT.Grouping.Review.provider-unavailable": "提供方身份接口不可用",
+  "TRUESIGHT.Grouping.Review.provider-identity": "提供方身份字段缺失或冲突",
+  "TRUESIGHT.Names.LoadRules": "读取规则内容",
+  "TRUESIGHT.Names.RuleContent": "规则内容与依据",
+  "TRUESIGHT.Names.RulesUnavailable": "当前无法读取规则内容；保留原条目行为。",
+  "TRUESIGHT.Names.NoRuleText": "此条目未提供规则正文。",
+  "TRUESIGHT.Names.RuleHint": "对照正文中的使用次数、恢复条件和成长规则。措辞、译文或自动化配置不同，本身不证明规则不同。",
+  "TRUESIGHT.Names.UsageConfig": "条目实现配置（不等同于规则正文）",
+  "TRUESIGHT.Names.ProviderTrace": "身份来源：{provider} · {owner} · {source} · {uid}",
+  "TRUESIGHT.Names.ScaleSource": "成长配置来源：{name} · {uuid}",
+  "TRUESIGHT.Names.CompareRules": "对照规则内容"
 }

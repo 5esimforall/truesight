@@ -1,7 +1,7 @@
 import { GROUP_RULE_VERSION } from './identity.mjs';
 
 const reviewReasons=new Set(['edition','source','rules','identifier','spell','identity','excluded','no-match',
-  'awaiting-review','unknown-type','type-context','owner-context','context-conflict','context-difference','context-size','origin','retained-members']);
+  'awaiting-review','unknown-type','type-context','owner-context','context-conflict','context-difference','context-size','origin','retained-members','provider-loading','provider-unavailable','provider-identity']);
 
 export function validSnapshot(value) {
   if (!value || value.version !== 1 || value.ruleVersion !== GROUP_RULE_VERSION

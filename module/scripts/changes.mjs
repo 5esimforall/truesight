@@ -47,6 +47,7 @@ export function classifyChange(event, document, delta, {userId} = {}) {
   if (has('name', 'originalName', 'flags.babele', 'flags.chris-premades.info', 'flags.gambits-premades.gpsUuid', 'folderId')) {
     result.add(event === 'updateActor' && !has('items') ? 'display' : 'names');
   }
+  if (has('system.description', 'system.uses.max', 'system.uses.recovery')) result.add('display');
   if (has('img')) result.add('display');
   return [...result];
 }

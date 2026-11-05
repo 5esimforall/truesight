@@ -1,3 +1,5 @@
+import {createRefreshQueue} from './names/refresh.mjs';
+import {createPlutoniumCnProvider} from './providers/plutonium-cn.mjs';
 import {createPublisher} from './catalog/publisher.mjs';
 import {CatalogService, CatalogError} from './catalog/service.mjs';
 import {DOCUMENT_TYPES} from './catalog/item-identity.mjs';
@@ -27,7 +29,7 @@ export function permitted(item, game) {
   return uuid.startsWith('@');
 }
 
-export function createRuntime({game, hooks, config, quickInsert = () => globalThis.QuickInsert, parser = () => globalThis.Parser, publisher: injectedPublisher, reportError}) {
+export function createRuntime({game, hooks, config, quickInsert = () => globalThis.QuickInsert, parser = () => globalThis.Parser, publisher: injectedPublisher, reportError, providerCapabilities = () => ({loader:globalThis.DataLoader,data:globalThis.DataUtil,urls:globalThis.UrlUtil})}) {
   const key = 'review';
   let service, publisherStatus, started = false, resetPromise, attemptedReset, reportedInvalid;
   const report = reportError ?? ((code, error) => {
@@ -51,6 +53,21 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
     if (!service || status === publisherStatus) return;
     publisherStatus = status; service.previews.clear(); service.invalidate('publication', ['publication']);
   }});
+  const external = createPlutoniumCnProvider({module:()=>game.modules.get('plutonium-cn'),capabilities:providerCapabilities});
+  const providerQueue=createRefreshQueue({
+    invalidate:()=>{external.invalidate();service.invalidate('provider-loading',['identity','names']);},
+    build:async isCurrent=>{
+      if(service.disposed||!quickInsert()?.hasIndex)return;
+      // Never pass records outside this client's visible index to a provider.
+      const rows=quickInsert().search('',()=>true,Number.MAX_SAFE_INTEGER).filter(({item})=>permitted(item,game));
+      const changed=await external.refresh(rows.map(row=>row.item));
+      if(changed&&isCurrent()&&!service.disposed)service.invalidate('provider-ready',['identity','names']);
+    }
+  });
+  const hydrate=()=>{
+    if(service?.disposed||!quickInsert()?.hasIndex||(!game.modules.get('plutonium-cn')?.active&&!external.records.size))return Promise.resolve();
+    return providerQueue.request();
+  };
   const providers = new Map();
   let indexing = false, failure = null;
   const subscriptions = [];
@@ -90,7 +107,7 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
       return {status: 'ready', results: visible, revision: visible};
     },
     environment: () => ({packs: game.packs, collections: game.collections, items: game.items, actors: game.actors, modules: game.modules, system: game.system, world: game.world,
-      lang: game.i18n.lang, localize: name => game.i18n.localize(name), sourceBooks: config.DND5E?.sourceBooks,
+      externalIdentities: external.records, lang: game.i18n.lang, localize: name => game.i18n.localize(name), sourceBooks: config.DND5E?.sourceBooks,
       publications: game.system.id === 'dnd5e' ? undefined : [], publicationProviders: providers,
       externalPublications: {titles: parser()?.SOURCE_JSON_TO_FULL, abbreviations: parser()?.SOURCE_JSON_TO_ABV, dates: parser()?.SOURCE_JSON_TO_DATE}}),
     load: () => game.settings.get(MODULE_ID, key),
@@ -140,13 +157,19 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
     if (access) service.invalidate(reason, changes, {defer: true});
   };
   for (const event of ['babele.ready', 'babele.dataLoaded', 'babele.reinitialized']) on(event, () => invalidate(event, ['names', 'identity']));
-  on('QuickInsert:IndexCompleted', () => { indexing = false; failure = null; invalidate('index'); });
+  on('QuickInsert:IndexCompleted', () => { indexing = false; failure = null; void hydrate(); invalidate('index'); });
+  on('srd5e.configUpdate',()=>{void hydrate();});
   for (const event of [...documentTypes.flatMap(type => ['create', 'update', 'delete'].map(action => action + type)),
     'createCompendium', 'updateCompendium', 'deleteCompendium', 'createFolder', 'updateFolder', 'deleteFolder', 'updateUser', 'updateSetting']) {
-    on(event, (document, delta) => invalidate(event, classifyChange(event, document, delta, {userId: game.user?.id})));
+    on(event, (document, delta) => {
+      const changes=classifyChange(event,document,delta,{userId:game.user?.id});
+      invalidate(event,changes);
+      if(changes.includes('access')&&external.records.size)void hydrate();
+    });
   }
   service.start = async () => {
     started=true;publisher.start();maintainReviewCache();
+    await hydrate();
     if (service.getStatus().status !== 'not-ready') { service.invalidate('ready'); return; }
     // A hidden/disabled Slow Insert panel is not responsible for starting QI.
     // Yield past other ready callbacks before requesting its public index API.
@@ -161,6 +184,6 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
       // QI may return while another build runs. Its completion hook owns ready.
     } catch (error) { indexing = false; failure = String(error); service.invalidate('index-failed'); }
   };
-  service.destroy = () => { publisher.destroy(); service.dispose(); indexed = visible = null; for (const [name, id] of subscriptions) hooks.off(name, id); };
+  service.destroy = () => { providerQueue.stop(); external.stop(); publisher.destroy(); service.dispose(); indexed = visible = null; for (const [name, id] of subscriptions) hooks.off(name, id); };
   return service;
 }
