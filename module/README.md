@@ -28,7 +28,7 @@ const member = catalog.getMember('Compendium.package.pack.Item.id');
 
 ### 目录与状态
 
-- `getStatus()`：`apiVersion`、`ruleVersion`、`revision`、`generation`、`scope`、`reviewed`、`canUndo`、`includeRisk`。
+- `getStatus()`：轻量状态查询，不执行 QI 搜索；返回 `apiVersion`、`ruleVersion`、`revision`、`generation`、`revisions`、`scope`、`reviewed`、`canUndo`、`includeRisk`。
 - `status` 区分 `not-ready`、`ready`、`unreviewed`、`unavailable`、`failed`。未审核成功返回独立条目；读取失败抛出带 `code`/`source` 的错误，不伪装成空组。
 - `whenReady({timeout})`：等 Quick Insert 索引完成，默认 60 秒；超时、被 GM-only 限制、接口不支持或审核损坏均明确拒绝。
 - `read(uuids?)`：返回同一审核修订下的 `entries: Map`、`groups: Map`、`changed` 和可见排除数量。成员包含类型、代际、状态、理由与来源证据，不含搜索包装、UI 对象或文档方法。指定 UUID 时，组成员仍是该组当前可访问的全部成员；未索引的查询条目标为 `not-indexed`，不会自行推断其归属。
@@ -80,3 +80,10 @@ CPR/GPS/MISC 适配监听相关证据变更重建计划；重建前先撤下旧�
 ## v0.1.6：精简顶部
 
 移除页签下方的常驻说明，保留计算、保存和错误状态；首次使用引导放入空列表。
+
+## v0.1.7：精确通知与构建复用
+
+- 普通生命值、资源消耗及偏好更新不触发证据刷新；普通改名保留预览，风险规则所需的名称变更仍作废预览。
+- 状态查询不扫描目录；相同元数据代次复用索引与归一化结果，每次读取仍按当前权限过滤，应用预览重新检查最新证据。
+- 名称消费者共享所需元数据的加载，取得各自的独立副本；刷新请求合并，旧异步任务不能重新发布结果。
+- 不改变聚类算法、审核格式、存储范围或世界数据。

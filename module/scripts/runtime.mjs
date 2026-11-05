@@ -33,15 +33,31 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
   for (const [type, fields] of [['Item', ITEM_FIELDS], ['Actor', ['system.source']]]) {
     for (const field of fields) if (!config[type].compendiumIndexFields.includes(field)) config[type].compendiumIndexFields.push(field);
   }
+  let indexed, visible, indexRevision = -1, indexIdentity;
+  const indexStatus = () => {
+    if (!game.modules.get('quick-insert')?.active) return {status: 'unavailable', reason: 'quick-insert-inactive'};
+    if (!game.user.isGM && game.settings.get('quick-insert', 'gmOnly')) return {status: 'unavailable', reason: 'quick-insert-gm-only'};
+    if (failure) return {status: 'failed', reason: failure};
+    const qi = quickInsert();
+    if (!game.ready || indexing || !qi?.hasIndex) return {status: 'not-ready', reason: 'index-loading'};
+    if (typeof qi.search !== 'function') return {status: 'failed', reason: 'unsupported-quick-insert'};
+    return {status: 'ready'};
+  };
   const service = new CatalogService({
-    index: () => {
-      if (!game.modules.get('quick-insert')?.active) return {status: 'unavailable', reason: 'quick-insert-inactive'};
-      if (!game.user.isGM && game.settings.get('quick-insert', 'gmOnly')) return {status: 'unavailable', reason: 'quick-insert-gm-only'};
-      if (failure) return {status: 'failed', reason: failure};
-      const qi = quickInsert();
-      if (!game.ready || indexing || !qi?.hasIndex) return {status: 'not-ready', reason: 'index-loading'};
-      if (typeof qi.search !== 'function') return {status: 'failed', reason: 'unsupported-quick-insert'};
-      return {status: 'ready', results: qi.search('', () => true, Number.MAX_SAFE_INTEGER).filter(({item}) => permitted(item, game))};
+    indexStatus,
+    index: ({fresh = false} = {}) => {
+      const status = indexStatus();
+      if (status.status !== 'ready') throw new Error(status.reason);
+      const qi = quickInsert(), identity = qi.searchLib?.index ?? qi;
+      if (fresh || !indexed || indexRevision !== service.revisions.index || indexIdentity !== identity) {
+        indexed = qi.search('', () => true, Number.MAX_SAFE_INTEGER);
+        indexRevision = service.revisions.index; indexIdentity = identity; visible = null;
+      }
+      // A cached index never substitutes for current permission checks. A
+      // permission change without a completion hook still changes the cache key.
+      const next = indexed.filter(({item}) => permitted(item, game));
+      if (!visible || visible.length !== next.length || visible.some((row, i) => row !== next[i])) visible = next;
+      return {status: 'ready', results: visible, revision: visible};
     },
     environment: () => ({packs: game.packs, modules: game.modules, system: game.system, world: game.world,
       lang: game.i18n.lang, localize: name => game.i18n.localize(name), sourceBooks: config.DND5E?.sourceBooks,
@@ -63,7 +79,16 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
     return removed;
   };
   const on = (name, callback) => subscriptions.push([name, hooks.on(name, callback)]);
-  const invalidate = (reason, changes) => service.invalidate(reason, changes, {defer: !changes?.includes('access')});
+  const invalidate = (reason, changes) => {
+    const access = changes?.includes('access');
+    service.invalidate(reason, changes, {defer: !access});
+    // Retract immediately, then refresh once after QI's remaining document
+    // hooks. Otherwise a cache filled during revocation/grant dispatch could
+    // retain the pre-update index indefinitely (incremental QI updates have no
+    // IndexCompleted event).
+    if (access) service.invalidate(reason, changes, {defer: true});
+  };
+  for (const event of ['babele.ready', 'babele.dataLoaded', 'babele.reinitialized']) on(event, () => invalidate(event, ['names']));
   on('QuickInsert:IndexCompleted', () => { indexing = false; failure = null; invalidate('index'); });
   for (const event of ['createItem', 'updateItem', 'deleteItem', 'createActor', 'updateActor', 'deleteActor',
     'createCompendium', 'updateCompendium', 'deleteCompendium', 'createFolder', 'updateFolder', 'deleteFolder', 'updateUser', 'updateSetting']) {
@@ -74,6 +99,7 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
     // A hidden/disabled Slow Insert panel is not responsible for starting QI.
     // Yield past other ready callbacks before requesting its public index API.
     await new Promise(resolve => setTimeout(resolve, 0));
+    if (service.disposed) return;
     if (quickInsert()?.hasIndex) { service.invalidate('ready'); return; }
     indexing = true;
     try {
@@ -82,6 +108,6 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
       // QI may return while another build runs. Its completion hook owns ready.
     } catch (error) { indexing = false; failure = String(error); service.invalidate('index-failed'); }
   };
-  service.destroy = () => { service.dispose(); for (const [name, id] of subscriptions) hooks.off(name, id); };
+  service.destroy = () => { service.dispose(); indexed = visible = null; for (const [name, id] of subscriptions) hooks.off(name, id); };
   return service;
 }

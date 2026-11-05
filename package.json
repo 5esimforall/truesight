@@ -5,6 +5,7 @@
   "scripts": {
     "test": "node --test tests/*.test.mjs",
     "check": "node tools/check.mjs",
-    "package": "node tools/package.mjs"
+    "package": "node tools/package.mjs",
+    "benchmark": "node tools/benchmark-refresh.mjs"
   }
 }

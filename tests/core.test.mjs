@@ -75,9 +75,12 @@ test('corpus snapshots use Foundry collection entries without interpreting pack 
   const catalogFor = () => new Map();
   const corpus = await core.readCorpus({packs, loadGrouping: () => catalogFor, loadTitleIndex: () => null});
   assert.deepEqual([...corpus.indexes.keys()], ['visible']);
-  assert.equal(corpus.indexes.get('visible'), index);
+  assert.notEqual(corpus.indexes.get('visible'), index);
+  assert.deepEqual([...corpus.indexes.get('visible').values()], [row]);
+  row.name = 'Changed after snapshot';
+  assert.equal(corpus.indexes.get('visible').get(row._id).name, 'Deflect Missiles');
   assert.deepEqual([...corpus.sources.keys()], ['visible', 'hidden', 'actors']);
-  assert.deepEqual(corpus.sources.get('visible'), {visible: true, documentName: 'Item', index});
+  assert.deepEqual(corpus.sources.get('visible'), {visible: true, documentName: 'Item', index: corpus.indexes.get('visible')});
   assert.deepEqual(corpus.sources.get('hidden'), {visible: false, documentName: 'Item', index: undefined});
   assert.equal(corpus.sources.get('actors').documentName, 'Actor');
   assert.equal(corpus.catalogFor, catalogFor);
@@ -90,4 +93,16 @@ test('Foundry collection index failures still identify the source and reject the
   }]]);
   await assert.rejects(core.readCorpus({packs, loadGrouping: () => () => new Map(), loadTitleIndex: () => null}),
     error => error.source === 'broken.pack' && error.cause.message === 'index failed');
+});
+
+test('a failed pack batch waits for all in-flight reads before allowing a retry', async () => {
+  let release;const gate=new Promise(resolve=>{release=resolve;});
+  const packs=new Map([
+    ['bad',{visible:true,documentName:'Item',getIndex:async()=>{throw Error('offline');}}],
+    ['slow',{visible:true,documentName:'Item',getIndex:async()=>{await gate;return new Map();}}]
+  ]);
+  let settled=false;
+  const reading=core.readCorpus({packs,loadGrouping:()=>()=>new Map(),loadTitleIndex:()=>null});
+  const checked=assert.rejects(reading,/Index unavailable/).then(()=>{settled=true;});
+  await new Promise(resolve=>setTimeout(resolve,5));assert.equal(settled,false);release();await checked;
 });

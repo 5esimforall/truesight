@@ -81,7 +81,14 @@ function addTo(map,key,value) {if(!map.has(key))map.set(key,[]);map.get(key).pus
 
 /** Explicit computation, never invoked by ordinary search/index refresh. */
 export function calculateGrouping(results,environment={},preferences=normalizeGrouping(),{includeRisk=false}={}) {
-  const entries=describeGroupingIndex(results,environment),buckets=new Map(),excluded=new Set(preferences.excluded??[]);
+  return calculateDescribedGrouping(describeGroupingIndex(results,environment),preferences,{includeRisk});
+}
+
+// Work on fresh entry records: normalized metadata can be shared across reads
+// and previews, while candidate warnings and membership remain computation-local.
+const copyEntries = entries => new Map([...entries].map(([id, entry]) => [id, {...entry}]));
+export function calculateDescribedGrouping(described,preferences=normalizeGrouping(),{includeRisk=false}={}) {
+  const entries=copyEntries(described),buckets=new Map(),excluded=new Set(preferences.excluded??[]);
   for(const entry of entries.values()) if(entry.spell&&!entry.warning&&!excluded.has(entry.uuid))addTo(buckets,`spell:${entry.rules}:${entry.id}`,entry);
   const candidates=new Map(),names=new Map();
   for(const [key,members] of buckets) {
@@ -117,7 +124,10 @@ export function calculateGrouping(results,environment={},preferences=normalizeGr
 /** Applied membership only. New/changed/unauthorized records never acquire a
  * family during refresh; names and package versions are not identities. */
 export function buildGroupingCatalog(results,environment={},snapshot=null,preferences=normalizeGrouping()) {
-  const entries=describeGroupingIndex(results,environment),groups=new Map(),excluded=new Set(preferences.excluded??[]);
+  return buildDescribedGroupingCatalog(describeGroupingIndex(results,environment),snapshot,preferences);
+}
+export function buildDescribedGroupingCatalog(described,snapshot=null,preferences=normalizeGrouping()) {
+  const entries=copyEntries(described),groups=new Map(),excluded=new Set(preferences.excluded??[]);
   let changed=0;
   for(const entry of entries.values()) {
     const previous=snapshot?.records?.[entry.uuid];

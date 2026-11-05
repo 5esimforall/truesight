@@ -1,4 +1,4 @@
-import {buildGroupingCatalog, calculateGrouping, canonicalUuid, groupingDiff, GROUP_RULE_VERSION} from './identity.mjs';
+import {describeGroupingIndex, buildDescribedGroupingCatalog, calculateDescribedGrouping, canonicalUuid, groupingDiff, GROUP_RULE_VERSION} from './identity.mjs';
 import {identifySource, prepareSourceEnvironment} from './source-resolution.mjs';
 import {emptyReview, readReview} from './state.mjs';
 import {ALL_CHANGES, affects} from '../changes.mjs';
@@ -14,9 +14,10 @@ const stable = snapshot => JSON.stringify({
 /** Shared client review. Dependencies are injected so the algorithm can be
  * tested without Foundry, Quick Insert, a search panel or any name resolver. */
 export class CatalogService {
-  constructor({index, environment, load, save, notify = () => {}}) {
-    Object.assign(this, {index, environment, save, notify});
+  constructor({index, indexStatus = () => ({status: 'ready'}), environment, load, save, notify = () => {}}) {
+    Object.assign(this, {index, indexStatus, environment, save, notify});
     this.generation = 0;
+    this.revisions = {index: 0, sources: 0, names: 0, access: 0, review: 0};
     this.previews = new Map();
     this.waiters = new Set();
     this.serial = 0;
@@ -25,12 +26,13 @@ export class CatalogService {
   }
 
   getStatus() {
+    if (this.disposed) return {apiVersion: 1, status: 'unavailable', reason: 'stopped'};
     const meta = {apiVersion: 1, ruleVersion: GROUP_RULE_VERSION, revision: this.state.revision,
-      generation: this.generation, scope: 'client-world-user', reviewed: Boolean(this.state.active),
+      generation: this.generation, revisions: {...this.revisions}, scope: 'client-world-user', reviewed: Boolean(this.state.active),
       canUndo: Boolean(this.state.previous), includeRisk: this.state.active?.includeRisk === true};
     if (this.failure) return {...meta, status: 'failed', reason: this.failure.code, message: this.failure.message};
     try {
-      const index = this.index();
+      const index = this.indexStatus();
       if (index.status !== 'ready') return {...meta, status: index.status, reason: index.reason};
       return {...meta, status: this.state.active ? 'ready' : 'unreviewed'};
     } catch (error) { return {...meta, status: 'failed', reason: 'index-error', message: String(error)}; }
@@ -58,12 +60,13 @@ export class CatalogService {
         this.waiters.delete(check);
         reject(new CatalogError('index-timeout', 'Quick Insert index did not become ready'));
       }, timeout);
+      check.cancel = () => { clearTimeout(timer); reject(new CatalogError('stopped')); };
       this.waiters.add(check);
     });
   }
 
   invalidate(reason = 'index', changes = ALL_CHANGES, {defer = false} = {}) {
-    if (!changes.length) return;
+    if (this.disposed || !changes.length) return;
     const domains = new Set(changes);
     // Names corroborate identity in risk previews, including candidates which
     // have not yet joined any applied group. Ordinary renames keep previews.
@@ -71,10 +74,16 @@ export class CatalogService {
     if (domains.has('sources')) domains.add('identity');
     if (['identity', 'access', 'review'].some(key => domains.has(key))) domains.add('names');
     this.generation++;
+    for (const domain of ['sources', 'names', 'access', 'review']) if (changes.includes(domain)) this.revisions[domain]++;
+    const indexChanged = ['identity', 'names', 'access', 'display'].some(domain => changes.includes(domain));
+    if (indexChanged) this.revisions.index++;
+    this.currentCache = null;
     if (affects({changes: [...domains]}, ['identity', 'access', 'review'])) this.previews.clear();
     const pending = this.pendingChange ?? {changes: new Set()};
     for (const domain of domains) pending.changes.add(domain);
     pending.reason = reason;
+    pending.deferred ||= defer;
+    pending.indexChanged ||= indexChanged;
     this.pendingChange = pending;
     clearTimeout(this.changeTimer);
     if (defer) this.changeTimer = setTimeout(() => this.publishChange(), 0);
@@ -85,19 +94,39 @@ export class CatalogService {
     const pending = this.pendingChange;
     if (!pending) return;
     this.pendingChange = null;
+    // QI document hooks may run after ours. Drop any index captured during hook
+    // dispatch once more before notifying consumers at the settled boundary.
+    if (pending.deferred && pending.indexChanged) this.revisions.index++;
     for (const check of this.waiters) check();
     // Events contain no UUIDs, names, source evidence or cached members.
     this.notify({...this.getStatus(), reason: pending.reason, changes: [...pending.changes]});
   }
 
-  dispose() { clearTimeout(this.changeTimer); this.pendingChange = null; }
+  dispose() {
+    this.disposed = true;
+    clearTimeout(this.changeTimer); this.pendingChange = null;
+    for (const check of this.waiters) check.cancel();
+    this.waiters.clear(); this.previews.clear(); this.metadataCache = this.currentCache = null;
+  }
 
-  current() {
+  current({fresh = false} = {}) {
     const status = this.assertReadable();
-    const index = this.index();
-    const environment = prepareSourceEnvironment(this.environment());
-    const data = buildGroupingCatalog(index.results, environment, this.state.active, {excluded: this.state.excluded});
-    return {status, results: index.results, environment, data};
+    const index = this.index({fresh});
+    const metadata = this.metadataCache;
+    // Injected sources without a revision are deliberately uncached. Runtime
+    // revisions change on metadata, index replacement and visible projection.
+    if (!metadata || index.revision === undefined || metadata.key !== index.revision || metadata.sources !== this.revisions.sources) {
+      const environment = prepareSourceEnvironment(this.environment());
+      this.metadataCache = {key: index.revision, sources: this.revisions.sources, environment,
+        described: describeGroupingIndex(index.results, environment)};
+      this.currentCache = null;
+    }
+    const {environment, described} = this.metadataCache;
+    if (!this.currentCache || this.currentCache.revision !== this.state.revision) {
+      this.currentCache = {revision: this.state.revision,
+        data: buildDescribedGroupingCatalog(described, this.state.active, {excluded: this.state.excluded})};
+    }
+    return {status, results: index.results, environment, described, data: this.currentCache.data};
   }
 
   read(uuids) {
@@ -134,9 +163,9 @@ export class CatalogService {
 
   getMember(uuid) { return this.read([uuid]).entries.get(canonicalUuid(uuid)); }
 
-  makeSnapshot({includeRisk = false} = {}) {
-    const {results, environment} = this.current();
-    return calculateGrouping(results, environment, {excluded: this.state.excluded}, {includeRisk});
+  makeSnapshot({includeRisk = false} = {}, {fresh = false} = {}) {
+    const {described} = this.current({fresh});
+    return calculateDescribedGrouping(described, {excluded: this.state.excluded}, {includeRisk});
   }
 
   preview(options = {}) {
@@ -145,7 +174,7 @@ export class CatalogService {
     // Only a bounded set of open previews lives in memory.
     if (this.previews.size >= 8) this.previews.delete(this.previews.keys().next().value);
     this.previews.set(id, {snapshot, options: structuredClone(options), revision: this.state.revision});
-    const names = new Map(this.index().results.map(({item}) => [canonicalUuid(item), item.name]));
+    const names = new Map(this.current().results.map(({item}) => [canonicalUuid(item), item.name]));
     return {id, ...this.getStatus(), diff: groupingDiff(this.state.active, snapshot),
       groups: Object.entries(snapshot.groups).map(([key, group]) => ({key, ...group, members: group.members.map(uuid => ({uuid, name: names.get(uuid)}))})),
       independent: Object.entries(snapshot.records).filter(([, record]) => !record.key)
@@ -156,7 +185,7 @@ export class CatalogService {
     if (this.saving) throw new CatalogError('save-in-progress');
     this.saving = true;
     try {
-      const permitted = new Set(this.index().results.map(({item}) => canonicalUuid(item)));
+      const permitted = new Set(this.current().results.map(({item}) => canonicalUuid(item)));
       const prune = snapshot => {
         if (!snapshot) return null;
         const result = structuredClone(snapshot);
@@ -182,7 +211,7 @@ export class CatalogService {
   async apply(id) {
     this.assertReadable();
     const preview = this.previews.get(id);
-    if (!preview || preview.revision !== this.state.revision || stable(this.makeSnapshot(preview.options)) !== stable(preview.snapshot)) {
+    if (!preview || preview.revision !== this.state.revision || stable(this.makeSnapshot(preview.options, {fresh: true})) !== stable(preview.snapshot)) {
       throw new CatalogError('preview-stale', 'The index or review changed; preview again');
     }
     return this.commit(preview.snapshot, this.state.excluded, undefined, 'apply');

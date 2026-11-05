@@ -10,7 +10,7 @@ import {groupingFixture, spell} from './catalog-fixture.mjs';
 
 function fixture(options = {}) {
   const f = {...groupingFixture(), events: [], status: 'ready', saved: options.saved ?? null, failSave: false};
-  f.service = new CatalogService({index: () => ({status:f.status, results:f.rows}), environment: () => f.environment,
+  f.service = new CatalogService({indexStatus: () => ({status:f.status}), index: () => ({status:f.status, results:f.rows}), environment: () => f.environment,
     load: () => f.saved, save: async value => {if(f.failSave) throw Error('quota'); f.saved = value;},
     notify: event => f.events.push(event)});
   f.apply = async () => f.service.apply(f.service.preview({includeRisk:true}).id);
@@ -203,4 +203,63 @@ test('batched notifications retain all domains and immediate access revocation f
   assert.equal(f.events.length,2);
   assert.ok(f.events[1].changes.includes('access'));
   await new Promise(resolve=>setTimeout(resolve,5));assert.equal(f.events.length,2);
+});
+
+test('status never scans; a revision reuses the QI scan and normalized metadata across consumers', async () => {
+  const f=runtimeFixture();f.qi.hasIndex=true;let scans=0;
+  f.qi.search=()=>{scans++;return f.rows;};
+  for(let i=0;i<100;i++)f.service.getStatus();assert.equal(scans,0);
+  f.service.read();const metadata=f.service.metadataCache;
+  f.service.read();f.service.getMember(f.rows[0].item.uuid);f.service.preview();
+  assert.equal(scans,1);assert.equal(f.service.metadataCache,metadata);
+  const preview=f.service.preview();await f.service.apply(preview.id);
+  assert.equal(scans,2); // One fresh evidence check at apply, never a cached authorization.
+  const applied=f.service.metadataCache;f.service.read();f.service.preview();assert.equal(f.service.metadataCache,applied);
+  assert.equal(scans,2);
+  f.hooks.callAll('updateActor',{}, {'system.attributes.hp.value':0});await new Promise(r=>setTimeout(r,5));
+  f.service.read();assert.equal(scans,2);
+  f.rows[0].item.name='New name';f.hooks.callAll('updateItem',{}, {name:'New name'});await new Promise(r=>setTimeout(r,5));
+  assert.equal(f.service.getMember(f.rows[0].item.uuid).names[0],'New name');assert.equal(scans,3);
+  // Permission checks are performed even on a cache hit, without a hook.
+  f.game.packs.get('fixture.spells').visible=false;
+  assert.equal(f.service.read().entries.size,0);assert.equal(scans,3);
+  f.service.destroy();
+});
+test('index object replacement and source revisions invalidate metadata without changing the algorithm', () => {
+  const f=runtimeFixture();f.qi.hasIndex=true;f.qi.searchLib={index:{}};
+  f.service.read();const before=f.service.metadataCache;
+  f.qi.searchLib.index={};f.service.read();assert.notEqual(f.service.metadataCache,before);
+  const next=f.service.metadataCache;f.service.registerPublications('test',[]);f.service.read();assert.notEqual(f.service.metadataCache,next);
+  f.service.destroy();
+});
+
+test('destroy cancels readiness waiters and pending notifications', async () => {
+  const f=runtimeFixture();const waiting=f.service.whenReady();
+  f.service.invalidate('index',undefined,{defer:true});f.service.destroy();
+  await assert.rejects(waiting,{code:'stopped'});assert.equal(f.service.waiters.size,0);
+  assert.equal(f.service.getStatus().reason,'stopped');
+});
+
+test('production corpus shares requested fields across consumers and rechecks access before using its cache', async t => {
+  const f=runtimeFixture();f.qi.hasIndex=true;const old=globalThis.game;t.after(()=>{globalThis.game=old;f.service.destroy();});
+  globalThis.game=f.game;connectCatalog(f.service);
+  let reads=0;const fields=[];const pack=f.game.packs.get('fixture.spells');pack.documentName='Item';
+  pack.getIndex=async request=>{reads++;fields.push(request.fields);return new Map([['a',{_id:'a',name:'例子',type:'spell',system:{identifier:'example-spell',source:{rules:'2014'},level:4,school:'con'},flags:{test:{id:'extra'}},folderId:'folder'}]]);};
+  const [a,b]=await Promise.all([core.loadCorpus({fields:['flags.test.id']}),core.loadCorpus({fields:['folderId']})]);
+  assert.equal(reads,1);assert.ok(fields[0].includes('folderId'));assert.ok(fields[0].includes('flags.test.id'));
+  a.indexes.get('fixture.spells').get('a').name='changed';assert.equal(b.indexes.get('fixture.spells').get('a').name,'例子');
+  await core.loadCorpus();assert.equal(reads,1);
+  pack.visible=false;assert.equal(a.isCurrent(),false);const denied=await core.loadCorpus();assert.equal(denied.indexes.size,0);assert.equal(reads,1);
+  pack.visible=true;await core.loadCorpus();assert.equal(reads,2);
+  f.hooks.callAll('updateItem',{}, {name:'new'});await new Promise(r=>setTimeout(r,5));await core.loadCorpus();assert.equal(reads,3);
+});
+
+test('access changes retract immediately and settle again after later QI hooks update the index', async () => {
+  const f=runtimeFixture();f.qi.hasIndex=true;let rows=f.rows.slice(0,1);f.qi.search=()=>rows;
+  const sizes=[];f.hooks.on('truesightChanged',()=>sizes.push(f.service.read().entries.size));
+  f.service.read();f.hooks.callAll('updateActor',{}, {ownership:{default:2}});
+  assert.equal(sizes.length,1);assert.equal(sizes[0],1);
+  rows=f.rows; // Simulate QI's document hook running after Truesight's hook.
+  await new Promise(resolve=>setTimeout(resolve,5));
+  assert.deepEqual(sizes,[1,6]);assert.equal(f.service.read().entries.size,6);f.service.destroy();
 });
