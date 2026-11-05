@@ -1,6 +1,6 @@
 import {createPublisher} from './catalog/publisher.mjs';
 import {CatalogService, CatalogError} from './catalog/service.mjs';
-import {reviewSettingKey} from './catalog/state.mjs';
+import {DOCUMENT_TYPES} from './catalog/item-identity.mjs';
 import {GROUP_INDEX_FIELDS} from './catalog/identity.mjs';
 import {classifyChange} from './changes.mjs';
 
@@ -20,14 +20,32 @@ export function permitted(item, game) {
     const actor = game.actors?.get(parts[1]);
     return parts.length > 2 ? actor?.testUserPermission(game.user, 'OBSERVER') === true : actor?.visible === true;
   }
-  // Importer records are already limited by QI; without complete spell
-  // metadata they remain independent under the existing identity rules.
+  const collection=game.collections?.get(parts[0]);
+  if (collection) return collection.get(parts[1])?.visible === true;
+  // Importer records are already limited by QI; missing identity metadata
+  // keeps them independent with a specific diagnostic.
   return uuid.startsWith('@');
 }
 
-export function createRuntime({game, hooks, config, quickInsert = () => globalThis.QuickInsert, parser = () => globalThis.Parser, publisher: injectedPublisher}) {
-  const legacyKey = reviewSettingKey(game.world, game.user?.id ?? game.userId), key = 'review';
-  let service, publisherStatus;
+export function createRuntime({game, hooks, config, quickInsert = () => globalThis.QuickInsert, parser = () => globalThis.Parser, publisher: injectedPublisher, reportError}) {
+  const key = 'review';
+  let service, publisherStatus, started = false, resetPromise, attemptedReset, reportedInvalid;
+  const report = reportError ?? ((code, error) => {
+    console.error('Truesight | ' + code, error);
+    globalThis.ui?.notifications?.error(game.i18n.localize('TRUESIGHT.Error.' + code), {permanent: true});
+  });
+  const maintainReviewCache = () => {
+    if (!started || service?.disposed) return;
+    if (!['invalid-review','review-conflict'].includes(service?.failure?.code)) {attemptedReset=reportedInvalid=undefined;return;}
+    const token=service.rejectedReview;
+    if (reportedInvalid!==token) {reportedInvalid=token;report(service.failure.code,service.failure);}
+    if (resetPromise || attemptedReset===token || !service.publication().canPublish) return;
+    attemptedReset=token;
+    resetPromise=Promise.resolve().then(()=>service.discardInvalidReview()).catch(error=>report('cache-reset-failed',error)).finally(()=>{
+      resetPromise=null;
+      if (service.rejectedReview!==token) maintainReviewCache();
+    });
+  };
   const publisher = injectedPublisher ?? createPublisher({game, hooks, changed: () => {
     const status = JSON.stringify(publisher.status());
     if (!service || status === publisherStatus) return;
@@ -36,10 +54,11 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
   const providers = new Map();
   let indexing = false, failure = null;
   const subscriptions = [];
-  game.settings.register(MODULE_ID, legacyKey, {scope: 'client', config: false, type: Object, default: null});
+  const documentTypes=[...new Set(['Item', ...DOCUMENT_TYPES, ...Object.keys(game.system.documentTypes??{})])];
   game.settings.register(MODULE_ID, key, {scope: 'world', config: false, type: Object, default: null,
     onChange: value => service?.receive(value, value?.operation ?? 'review')});
-  for (const [type, fields] of [['Item', ITEM_FIELDS], ['Actor', ['system.source']]]) {
+  for (const [type, fields] of documentTypes.map(type => [type, type==='Item'?ITEM_FIELDS:['system.source', '_stats.compendiumSource']])) {
+    if (!config[type]?.compendiumIndexFields) continue;
     for (const field of fields) if (!config[type].compendiumIndexFields.includes(field)) config[type].compendiumIndexFields.push(field);
   }
   let indexed, visible, indexRevision = -1, indexIdentity;
@@ -55,7 +74,6 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
   service = new CatalogService({
     canManage: () => game.user?.isGM === true,
     publication: () => publisher.status(),
-    legacy: () => game.settings.get(MODULE_ID, legacyKey),
     indexStatus,
     index: ({fresh = false} = {}) => {
       const status = indexStatus();
@@ -71,16 +89,16 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
       if (!visible || visible.length !== next.length || visible.some((row, i) => row !== next[i])) visible = next;
       return {status: 'ready', results: visible, revision: visible};
     },
-    environment: () => ({packs: game.packs, modules: game.modules, system: game.system, world: game.world,
+    environment: () => ({packs: game.packs, collections: game.collections, items: game.items, actors: game.actors, modules: game.modules, system: game.system, world: game.world,
       lang: game.i18n.lang, localize: name => game.i18n.localize(name), sourceBooks: config.DND5E?.sourceBooks,
       publications: game.system.id === 'dnd5e' ? undefined : [], publicationProviders: providers,
       externalPublications: {titles: parser()?.SOURCE_JSON_TO_FULL, abbreviations: parser()?.SOURCE_JSON_TO_ABV, dates: parser()?.SOURCE_JSON_TO_DATE}}),
     load: () => game.settings.get(MODULE_ID, key),
-    save: async (state, {revision, reason}) => {
+    save: async (state, {revision, reason, expectedReview}) => {
       publisher.begin();
       try {
         const current = game.settings.get(MODULE_ID, key);
-        if ((current?.revision ?? 0) !== revision) {
+        if (expectedReview!==undefined ? JSON.stringify(current)!==expectedReview : (current?.revision ?? 0)!==revision) {
           service.receive(current);
           throw new CatalogError('preview-stale');
         }
@@ -91,7 +109,14 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
         return next;
       } finally { publisher.end(); }
     },
-    notify: status => hooks.callAll(CHANGED, status)
+    notify: status => {
+      hooks.callAll(CHANGED, status);
+      maintainReviewCache();
+      if (status.reason==='review-reset') {
+        globalThis.ui?.notifications?.warn(game.i18n.localize('TRUESIGHT.UI.CacheCleared'), {permanent: true});
+        if (started && indexStatus().status==='not-ready' && !indexing) void service.start();
+      }
+    }
   });
   service.registerPublications = (id, records) => {
     if (typeof id !== 'string' || !id.trim() || !Array.isArray(records)) throw new TypeError('Expected a publication provider id and records');
@@ -114,20 +139,21 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
     // IndexCompleted event).
     if (access) service.invalidate(reason, changes, {defer: true});
   };
-  for (const event of ['babele.ready', 'babele.dataLoaded', 'babele.reinitialized']) on(event, () => invalidate(event, ['names']));
+  for (const event of ['babele.ready', 'babele.dataLoaded', 'babele.reinitialized']) on(event, () => invalidate(event, ['names', 'identity']));
   on('QuickInsert:IndexCompleted', () => { indexing = false; failure = null; invalidate('index'); });
-  for (const event of ['createItem', 'updateItem', 'deleteItem', 'createActor', 'updateActor', 'deleteActor',
+  for (const event of [...documentTypes.flatMap(type => ['create', 'update', 'delete'].map(action => action + type)),
     'createCompendium', 'updateCompendium', 'deleteCompendium', 'createFolder', 'updateFolder', 'deleteFolder', 'updateUser', 'updateSetting']) {
     on(event, (document, delta) => invalidate(event, classifyChange(event, document, delta, {userId: game.user?.id})));
   }
   service.start = async () => {
-    publisher.start();
+    started=true;publisher.start();maintainReviewCache();
     if (service.getStatus().status !== 'not-ready') { service.invalidate('ready'); return; }
     // A hidden/disabled Slow Insert panel is not responsible for starting QI.
     // Yield past other ready callbacks before requesting its public index API.
     await new Promise(resolve => setTimeout(resolve, 0));
     if (service.disposed) return;
     if (quickInsert()?.hasIndex) { service.invalidate('ready'); return; }
+    if (indexing) return;
     indexing = true;
     try {
       if (typeof quickInsert()?.forceIndex !== 'function') throw Error('unsupported-quick-insert');

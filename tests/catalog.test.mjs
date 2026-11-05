@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CatalogService} from '../module/scripts/catalog/service.mjs';
-import {validSnapshot, reviewSettingKey} from '../module/scripts/catalog/state.mjs';
+import {validSnapshot} from '../module/scripts/catalog/state.mjs';
 import {connectCatalog, catalog} from '../module/scripts/catalog/api.mjs';
 import {loadGrouping, itemGroups} from '../module/scripts/names/groups.mjs';
 import {createRuntime, permitted} from '../module/scripts/runtime.mjs';
@@ -116,8 +116,6 @@ test('corrupt or incompatible persisted review is an explicit failure, not no-re
     const f=fixture({saved});assert.equal(f.service.getStatus().status,'failed');assert.throws(()=>f.service.read(),{code:'invalid-review'});
   }
   assert.equal(validSnapshot({version:1,ruleVersion:99}),null);
-  assert.notEqual(reviewSettingKey({id:'a'},{id:'u'}),reviewSettingKey({id:'b'},{id:'u'}));
-  assert.notEqual(reviewSettingKey({id:'a'},{id:'u'}),reviewSettingKey({id:'a'},{id:'v'}));
 });
 
 function runtimeFixture() {
@@ -263,4 +261,28 @@ test('access changes retract immediately and settle again after later QI hooks u
   rows=f.rows; // Simulate QI's document hook running after Truesight's hook.
   await new Promise(resolve=>setTimeout(resolve,5));
   assert.deepEqual(sizes,[1,6]);assert.equal(f.service.read().entries.size,6);f.service.destroy();
+});
+
+test('invalid input retracts a previously valid projection and clears preview and normalized caches immediately', async () => {
+  const f=fixture();await f.apply();f.service.preview();f.service.read();
+  assert.ok(f.service.metadataCache);assert.ok(f.service.state.active);
+  f.service.receive({schemaVersion:99,revision:9});
+  assert.equal(f.service.state.active,null);assert.equal(f.service.state.previous,null);
+  assert.equal(f.service.previews.size,0);assert.equal(f.service.metadataCache,null);assert.equal(f.service.currentCache,null);
+  assert.throws(()=>f.service.read(),{code:'invalid-review'});
+  await f.service.discardInvalidReview();assert.equal(f.service.state.revision,10);assert.equal(f.saved.previous,null);
+  assert.deepEqual(f.saved.excluded,[]);assert.equal(f.service.read().groups.size,0);
+  assert.ok(f.events.some(e=>e.reason==='review-reset'));f.service.dispose();
+});
+
+test('late cleanup receipts cannot overwrite a newer review and players cannot clear world caches', async () => {
+  const f=fixture({saved:{schemaVersion:99,revision:3}});
+  f.service.canManage=()=>false;
+  await assert.rejects(f.service.discardInvalidReview(),{code:'review-forbidden'});
+  f.service.canManage=()=>true;
+  let finish;f.service.save=()=>new Promise(resolve=>{finish=resolve;});
+  const clearing=f.service.discardInvalidReview();
+  f.service.receive({schemaVersion:1,revision:5,active:null,previous:null,excluded:[]});
+  finish();await clearing;
+  assert.equal(f.service.state.revision,5);assert.equal(f.service.failure,null);f.service.dispose();
 });

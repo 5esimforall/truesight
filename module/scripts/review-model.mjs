@@ -10,7 +10,7 @@ export function reviewRows(view, preview = null) {
   if (preview) for(const group of before) if(!after.some(g=>same(g.members,group.members))) {
     if(!after.some(g=>g.members.some(id=>group.members.includes(id)))) rows.push({...group,change:'removed',previous:[group],name:view.entries.get(group.members[0])?.names?.[0] ?? group.key});
   }
-  const independent = preview ? preview.independent : [...view.entries.values()].filter(e=>!e.key).map(e=>({uuid:e.uuid,reason:e.warning ?? 'no-match'}));
+  const independent = preview ? preview.independent : [...view.entries.values()].filter(e=>!e.key).map(e=>({uuid:e.uuid,reason:e.reason}));
   for(const entry of independent) rows.push({key:entry.uuid,name:view.entries.get(entry.uuid)?.names?.[0] ?? entry.name ?? entry.uuid,members:[entry.uuid],independent:true,reason:entry.reason,change:'independent',previous:[]});
   return rows;
 }

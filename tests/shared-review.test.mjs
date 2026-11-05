@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {createRuntime} from '../module/scripts/runtime.mjs';
 import {createPublisher} from '../module/scripts/catalog/publisher.mjs';
 import {CatalogService} from '../module/scripts/catalog/service.mjs';
-import {reviewSettingKey, readReview} from '../module/scripts/catalog/state.mjs';
 import {connectCatalog, catalog} from '../module/scripts/catalog/api.mjs';
 import {groupingFixture, spell} from './catalog-fixture.mjs';
 
@@ -15,7 +14,7 @@ function hooks() {
 function world() {
   const values = new Map(), clients = []; let failure = false, waiting = null;
   const create = (id, isGM, publish = isGM) => {
-    const f = groupingFixture(), event = hooks(), definitions = new Map(), notices = [];
+    const f = groupingFixture(), event = hooks(), definitions = new Map(), notices = [], errors = [];
     const game = {ready:true,world:{id:'world'},user:{id,isGM},system:{id:'dnd5e'},i18n:{lang:'en',localize:k=>k},
       modules:new Map([['quick-insert',{active:true}]]),packs:new Map([['fixture.spells',{visible:true}]]),items:new Map(),actors:new Map(),
       settings:{register(ns,key,definition) {definitions.set(ns+'.'+key,definition);},
@@ -29,10 +28,10 @@ function world() {
           return value;
         }}};
     const runtime = createRuntime({game,hooks:event,config:{Item:{compendiumIndexFields:[]},Actor:{compendiumIndexFields:[]}},
-      quickInsert:()=>({hasIndex:true,search:()=>f.rows}),parser:()=>null,
+      quickInsert:()=>({hasIndex:true,search:()=>f.rows}),parser:()=>null,reportError:code=>errors.push(code),
       publisher:{status:()=>({canPublish:publish,publishReason:publish?null:'publisher-other-gm'}),start(){},begin(){},end(){},destroy(){}}});
     event.on('truesightChanged',s=>notices.push(s));
-    const client = {runtime,game,definitions,f,notices}; clients.push(client); return client;
+    const client = {runtime,game,definitions,f,notices,errors}; clients.push(client); return client;
   };
   return {values,clients,create,fail(value) {failure=value;},pause(value) {waiting=value;}};
 }
@@ -90,18 +89,35 @@ test('recalculation preserves absent relationships, exclusions and undo without 
   await gm.runtime.undo();assert.ok(w.values.get('truesight.review').active.records[missing.item.uuid]);
 });
 
-test('legacy import is explicit, previewed, revision-bound and preserves the client original', async () => {
-  const fixture=groupingFixture();let legacy;
-  const local=new CatalogService({index:()=>({status:'ready',results:fixture.rows}),environment:()=>fixture.environment,load:()=>null,save:async value=>{legacy=value;}});
-  await apply(local);const w=world(),key='truesight.'+reviewSettingKey({id:'world'},'gm');w.values.set(key,legacy);
-  const gm=w.create('gm',true),p=w.create('p',false);
-  assert.equal(gm.runtime.getStatus().legacyAvailable,true);assert.equal(p.runtime.read().groups.size,0);
-  const preview=gm.runtime.preview({importLegacy:true});assert.equal(preview.importLegacy,true);assert.equal(gm.runtime.state.revision,0);
-  await gm.runtime.apply(preview.id);assert.equal(p.runtime.read().groups.size,3);assert.deepEqual(w.values.get(key),legacy);
-  assert.throws(()=>gm.runtime.preview({importLegacy:true}),{code:'legacy-already-initialized'});
-  const bad=world();bad.values.set(key,{schemaVersion:99});const broken=bad.create('gm',true);
-  assert.throws(()=>broken.runtime.preview({importLegacy:true}),/Invalid/);assert.equal(bad.values.has('truesight.review'),false);
+
+test('invalid world review errors on all clients and the designated GM clears active, undo and exclusions', async () => {
+  const w=world();w.values.set('truesight.review',{schemaVersion:99,revision:7,active:{bad:true},previous:{bad:true},excluded:['old']});
+  const player=w.create('p',false),other=w.create('other',true,false);
+  await player.runtime.start();await other.runtime.start();await settle();
+  assert.equal(w.values.get('truesight.review').schemaVersion,99);
+  assert.equal(player.runtime.getStatus().reason,'invalid-review');
+  assert.deepEqual(player.errors,['invalid-review']);assert.deepEqual(other.errors,['invalid-review']);
+  const gm=w.create('gm',true);await gm.runtime.start();await settle();
+  const cache=w.values.get('truesight.review');
+  assert.equal(cache.revision,8);assert.equal(cache.active,null);assert.equal(cache.previous,null);assert.deepEqual(cache.excluded,[]);
+  assert.equal(gm.runtime.read().groups.size,0);assert.equal(player.runtime.getStatus().status,'unreviewed');
+  assert.deepEqual(gm.errors,['invalid-review']);
+  assert.ok([...gm.definitions.keys()].every(key=>key==='truesight.review'));
+  assert.throws(()=>gm.runtime.preview({importLegacy:true}),{code:'invalid-options'});
+  await apply(gm.runtime);assert.equal(player.runtime.read().groups.size,3);
+  for(const client of w.clients)client.runtime.destroy();
 });
+
+test('failed invalid-cache reset stays explicitly failed and never publishes retained members', async () => {
+  const w=world();w.values.set('truesight.review',{bad:true});w.fail(true);
+  const gm=w.create('gm',true);await gm.runtime.start();await settle();
+  assert.equal(gm.runtime.getStatus().reason,'invalid-review');assert.equal(gm.runtime.state.active,null);
+  assert.deepEqual(gm.errors,['invalid-review','cache-reset-failed']);assert.deepEqual(w.values.get('truesight.review'),{bad:true});
+  await settle();assert.equal(gm.errors.length,2);gm.runtime.destroy();
+  w.fail(false);const reload=w.create('gm',true);await reload.runtime.start();await settle();
+  assert.equal(reload.runtime.getStatus().status,'unreviewed');reload.runtime.destroy();
+});
+
 
 function publisherNetwork() {
   const users=new Map([['a',{id:'a',isGM:true,active:true}],['b',{id:'b',isGM:true,active:true}]]);

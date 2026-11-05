@@ -1,8 +1,8 @@
 /** Public notifications describe affected domains, never changed document IDs. */
 export const ALL_CHANGES = Object.freeze(['identity', 'names', 'access', 'sources', 'review', 'display']);
 export function affects(change, domains) {
-  // API v1 notifications predating domain information require a full refresh.
-  return !Array.isArray(change?.changes) || domains.some(domain => change.changes.includes(domain));
+  if (!Array.isArray(change?.changes)) throw new TypeError('Expected a domain-tagged change notification');
+  return domains.some(domain => change.changes.includes(domain));
 }
 
 function paths(value, prefix = '') {
@@ -40,7 +40,10 @@ export function classifyChange(event, document, delta, {userId} = {}) {
     if (has('name', 'type', 'sorting')) result.add('names');
     return [...result];
   }
-  if (has('type', 'system.identifier', 'system.source', 'system.level', 'system.school', 'items')) result.add('identity');
+  if (has('type', 'system.identifier', 'system.source', 'system.level', 'system.school', 'system.type', 'system.classIdentifier', 'system.requirements', 'system.prerequisites',
+    'system.advancement', 'system.rarity', 'system.magicalBonus', '_stats.compendiumSource', 'items')) result.add('identity');
+  if (event === 'updateItem' && ['class', 'subclass', 'race', 'background'].includes(document?.type)
+    && has('name', 'originalName', 'flags.babele')) result.add('identity');
   if (has('name', 'originalName', 'flags.babele', 'flags.chris-premades.info', 'flags.gambits-premades.gpsUuid', 'folderId')) {
     result.add(event === 'updateActor' && !has('items') ? 'display' : 'names');
   }

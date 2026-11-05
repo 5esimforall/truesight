@@ -1,3 +1,4 @@
+import {GROUP_RULE_VERSION} from './identity.mjs';
 import {affects} from '../changes.mjs';
 import {CatalogError} from './service.mjs';
 
@@ -10,7 +11,7 @@ function current() {
 export const catalog = Object.freeze({
   apiVersion: 1,
   affects,
-  getStatus: () => service?.getStatus() ?? {apiVersion: 1, ruleVersion: 1, revision: 0, generation: 0, status: 'not-ready'},
+  getStatus: () => service?.getStatus() ?? {apiVersion: 1, ruleVersion: GROUP_RULE_VERSION, revision: 0, generation: 0, status: 'not-ready'},
   whenReady: options => current().whenReady(options),
   read: uuids => current().read(uuids),
   getMember: uuid => current().getMember(uuid),

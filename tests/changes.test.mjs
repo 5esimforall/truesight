@@ -23,8 +23,9 @@ test('nested, flat, parent replacement and deletion evidence updates are classif
   assert.ok(classify('updateActor', {items:[]}).includes('identity'));
   assert.ok(classify('updateItem', undefined).includes('identity'));
 });
-test('domain filters accept legacy notifications but ignore unrelated classified changes', () => {
-  assert.equal(affects(undefined,['names']),true);
+test('domain filters reject untagged notifications and ignore unrelated classified changes', () => {
+  assert.throws(()=>affects(undefined,['names']), /domain-tagged/);
+  assert.throws(()=>affects({},['names']), /domain-tagged/);
   assert.equal(affects({changes:['display']},['names']),false);
   assert.equal(affects({changes:['names']},['names']),true);
 });
