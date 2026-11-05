@@ -34,7 +34,3 @@ npm run package
 打包输出 `dist/truesight-v<version>.zip`，ZIP 顶层为 `truesight/`。解压到 Foundry 用户数据的 `Data/modules/`，使 `module.json` 位于 `Data/modules/truesight/module.json`。`module/` 是开发目录名，不是安装目录名。
 
 源码修改在本项目进行，不直接在 Foundry 安装目录开发。打包本身不会安装、启用或重启 Foundry；用户明确要求部署时按协作约定直接执行授权范围内的部署与验证。
-
-## 迁移记录
-
-源码与基座测试从 `fvtt-zh-aliases` 拆出；旧提交历史保留在该仓库。历史 Truesight ZIP 一并迁入本项目 `dist/`，适配发行包及原工作区的历史评估记录仍留在原项目。本次目录迁移不改变模块 ID、公共 API 或运行时行为。
