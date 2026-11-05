@@ -223,12 +223,12 @@ export class CatalogService {
     const preview=previewId==null?null:this.previews.get(previewId);
     if(previewId!=null&&(!preview||preview.revision!==this.state.revision))throw new CatalogError('preview-stale');
     const snapshot=preview?.snapshot??this.state.active;
-    const data=preview?buildDescribedGroupingCatalog(current.described,snapshot,{excluded:this.state.excluded}):current.data;
+    const data=preview?buildDescribedGroupingCatalog(current.described,snapshot,{excluded:preview.exclusion?.excluded??this.state.excluded}):current.data;
     const keys=new Map([...data.entries].map(([id,entry])=>[id,entry.key]));
     const decisions=snapshot?.decisions??[];
     const cache=this.nameReviewCache;
-    if(!cache||cache.described!==current.described||cache.snapshot!==snapshot||cache.generation!==this.generation) {
-      this.nameReviewCache={described:current.described,snapshot,generation:this.generation,
+    if(!cache||cache.described!==current.described||cache.snapshot!==snapshot||cache.generation!==this.generation||cache.previewId!==previewId) {
+      this.nameReviewCache={described:current.described,snapshot,generation:this.generation,previewId,
         sets:buildNameSets(current.described,keys,decisions)};
     }
     return {...current,keys,decisions,sets:this.nameReviewCache.sets};
@@ -353,15 +353,66 @@ export class CatalogService {
     return this.storePreview(snapshot,options);
   }
 
-  storePreview(snapshot,options,decision=null) {
+  // Exclusion quarantines a UUID from grouping; it does not assert a pairwise difference.
+  makeExclusion(request, {fresh = false} = {}) {
+    this.assertManager();
+    if (!request || typeof request !== 'object' || Array.isArray(request)
+      || Object.keys(request).some(key => !['uuid', 'excluded'].includes(key))
+      || typeof request.uuid !== 'string' || !request.uuid.trim() || typeof request.excluded !== 'boolean') {
+      throw new CatalogError('invalid-options');
+    }
+    const uuid = canonicalUuid(request.uuid);
+    const {described, data} = this.current({fresh});
+    const entry = data.entries.get(uuid);
+    if (!entry) throw new CatalogError('outside-index');
+    if (request.excluded ? !entry.key : !this.state.excluded.includes(uuid)) {
+      throw new CatalogError(request.excluded ? 'not-a-member' : 'not-excluded');
+    }
+    const excluded = request.excluded ? [...new Set([...this.state.excluded, uuid])]
+      : this.state.excluded.filter(id => id !== uuid);
+    const after = buildDescribedGroupingCatalog(described, this.state.active, {excluded});
+    const beforeKey = entry.key, afterKey = after.entries.get(uuid).key;
+    const beforeMembers = beforeKey ? data.groups.get(beforeKey).map(e => e.uuid) : [uuid];
+    const afterMembers = afterKey ? after.groups.get(afterKey).map(e => e.uuid) : [uuid];
+    for (const key of new Set([beforeKey, afterKey].filter(Boolean))) {
+      if (this.state.active.groups[key].members.some(id => !described.has(id))) throw new CatalogError('incomplete-group');
+    }
+    const members = [...new Set([...beforeMembers, ...afterMembers])].sort();
+    const evidence = members.map(id => {
+      const e = described.get(id);
+      return {uuid: id, fingerprint: e.fingerprint, nameFingerprint: e.nameFingerprint,
+        before: data.entries.get(id).key, after: after.entries.get(id).key};
+    });
+    return {request: {uuid, excluded: request.excluded}, excluded, members, beforeMembers, afterMembers,
+      restored: !request.excluded && Boolean(afterKey), evidence};
+  }
+
+  previewExclusion(request) {
+    const exclusion = this.makeExclusion(request);
+    return this.storePreview(structuredClone(this.state.active), {}, null, exclusion);
+  }
+
+  effectiveSnapshot(snapshot, excluded) {
+    const {described} = this.current();
+    const data = buildDescribedGroupingCatalog(described, snapshot, {excluded});
+    return {records: Object.fromEntries([...data.entries].map(([id, e]) => [id, {key: e.key, reason: e.reason}])),
+      groups: Object.fromEntries([...data.groups].map(([key, entries]) => [key,
+        {...snapshot.groups[key], members: entries.map(e => e.uuid)}]))};
+  }
+
+  storePreview(snapshot,options,decision=null,exclusion=null) {
     const id = String(++this.serial);
     // Only a bounded set of open previews lives in memory.
     if (this.previews.size >= 8) this.previews.delete(this.previews.keys().next().value);
-    this.previews.set(id, {snapshot, options: structuredClone(options), revision: this.state.revision,decision});
+    this.previews.set(id, {snapshot, options: structuredClone(options), revision: this.state.revision,decision,exclusion});
     const names = new Map(this.current().results.map(({item}) => [canonicalUuid(item), item.name]));
-    return {id, ...this.getStatus(), decision:structuredClone(decision), retained: Object.keys(snapshot.records).filter(uuid => !names.has(uuid)).length, diff: groupingDiff(this.state.active, snapshot),
-      groups: Object.entries(snapshot.groups).map(([key, group]) => ({key, ...group, members: group.members.map(uuid => ({uuid, name: names.get(uuid)}))})),
-      independent: Object.entries(snapshot.records).filter(([, record]) => !record.key)
+    const projected = exclusion ? this.effectiveSnapshot(snapshot, exclusion.excluded) : snapshot;
+    const before = exclusion ? this.effectiveSnapshot(this.state.active, this.state.excluded) : this.state.active;
+    return {id, ...this.getStatus(), decision:structuredClone(decision), exclusion: exclusion ? structuredClone({request:exclusion.request,
+      members:exclusion.members,beforeMembers:exclusion.beforeMembers,afterMembers:exclusion.afterMembers,restored:exclusion.restored}) : null,
+      retained: Object.keys(snapshot?.records??{}).filter(uuid => !names.has(uuid)).length, diff: groupingDiff(before, projected),
+      groups: Object.entries(projected.groups).map(([key, group]) => ({key, ...group, members: group.members.map(uuid => ({uuid, name: names.get(uuid)}))})),
+      independent: Object.entries(projected.records).filter(([, record]) => !record.key)
         .map(([uuid, record]) => ({uuid, name: names.get(uuid), reason: record.reason}))};
   }
 
@@ -385,6 +436,15 @@ export class CatalogService {
     this.assertPublisher();
     this.assertReadable();
     const preview = this.previews.get(id);
+    if (preview?.exclusion) {
+      let expected;
+      if (preview.revision === this.state.revision) {
+        try { expected = this.makeExclusion(preview.exclusion.request, {fresh:true}); }
+        catch (error) { if (!(error instanceof CatalogError)) throw error; }
+      }
+      if (!expected || JSON.stringify(expected) !== JSON.stringify(preview.exclusion)) throw new CatalogError('preview-stale');
+      return this.commit(this.state.active, expected.excluded, undefined, expected.request.excluded ? 'exclude' : 'restore');
+    }
     let expected;
     if(preview&&preview.revision===this.state.revision) {
       try {expected=preview.decision?this.makeNameDecision(preview.decision.request,{fresh:true}):this.makeSnapshot(preview.options,{fresh:true});}
@@ -403,13 +463,4 @@ export class CatalogService {
     return this.commit(this.state.previous.active, this.state.previous.excluded, null, 'undo');
   }
 
-  async exclude(uuid) {
-    this.assertPublisher();
-    uuid = canonicalUuid(uuid);
-    const current = this.read([uuid]).entries.get(uuid);
-    if (!current?.key) throw new CatalogError('not-a-member');
-    return this.commit(this.state.active, [...new Set([...this.state.excluded, uuid])], undefined, 'exclude');
-  }
-
-  async restoreExcluded() { this.assertPublisher(); this.assertReadable(); return this.commit(this.state.active, [], undefined, 'restore'); }
 }

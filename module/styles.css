@@ -102,3 +102,10 @@
 .truesight-review .ts-rule-evidence h4,
 .truesight-review .ts-rule-comparison h4 { font:600 13px/1.4 var(--font-body, sans-serif); margin:5px 0; border:0; overflow-wrap:anywhere; }
 .truesight-review .ts-rule-text { font-size:12px; line-height:1.5; margin:6px 0; }
+
+/* Identity changes are secondary, explicit and scoped to one entry. */
+.truesight-review .ts-exclusion-actions { margin-top: 8px; font-size: 12px; }
+.truesight-review .ts-exclusion-actions summary { cursor: pointer; color: var(--ts-muted); }
+.truesight-review .ts-exclusion-actions p { line-height: 1.5; }
+.truesight-review .ts-exclusion-group { border-left: 2px solid var(--ts-border); padding-left: 8px; }
+.truesight-review .ts-exclusion-preview { overflow-wrap: anywhere; }

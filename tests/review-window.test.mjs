@@ -83,3 +83,51 @@ test('rule comparison loads only the selected pair and clears displayed evidence
  assert.equal(service.state.active,null,'reading never publishes review');
  hook({changes:['display']});assert.equal(descendants(root).some(n=>n.className==='ts-rule-comparison'),false);
 });
+
+function uiFixture(t,service) {
+ const keys=['game','document','foundry','Hooks'],before=Object.fromEntries(keys.map(k=>[k,globalThis[k]]));t.after(()=>Object.assign(globalThis,before));
+ globalThis.game={i18n:{localize:k=>k}};globalThis.document={createElement:t=>new Element(t)};
+ globalThis.foundry={applications:{api:{ApplicationV2:class{}}}};globalThis.Hooks={on:()=>1,off(){}};
+ connectCatalog(service);
+}
+const findButton=(root,key)=>descendants(root).find(n=>n.tag==='button'&&n.textContent.startsWith('TRUESIGHT.'+key));
+test('context entry selects the full group and exclusion/restoration require explicit application',async t=>{
+ const service=fixture();await service.apply(service.preview().id);uiFixture(t,service);
+ const view=service.read(),group=[...view.groups.values()][1],uuid=group.members[0],revision=view.revision;
+ const root=await new (reviewWindowClass())({memberUuid:uuid})._renderHTML();
+ assert.equal(service.state.revision,revision);
+ assert.equal(descendants(root).find(n=>n.className==='ts-row'&&n.attributes['aria-pressed']==='true').attributes['data-row-key'],group.key);
+ assert.equal(descendants(root).filter(n=>n.tag==='code'&&group.members.includes(n.textContent)).length,group.members.length);
+ assert.ok(findButton(root,'Exclusion.Exclude'));assert.equal(findButton(root,'Grouping.RestoreExcluded'),undefined);
+ await findButton(root,'Exclusion.Exclude').onclick();
+ assert.equal(service.state.revision,revision);assert.ok(descendants(root).some(n=>n.className==='ts-risk ts-exclusion-preview'));
+ await findButton(root,'UI.Discard').onclick();assert.equal(service.state.revision,revision);
+ await findButton(root,'Exclusion.Exclude').onclick();await findButton(root,'UI.Apply').onclick();
+ assert.equal(service.state.excluded.length,1);assert.ok(findButton(root,'Exclusion.Restore'));
+ await findButton(root,'Exclusion.Restore').onclick();assert.equal(service.state.excluded.length,1);
+ await findButton(root,'UI.Apply').onclick();assert.deepEqual(service.state.excluded,[]);
+});
+
+test('missing context reports a problem without silently selecting an unrelated group',async t=>{
+ const service=fixture();await service.apply(service.preview().id);uiFixture(t,service);
+ const root=await new (reviewWindowClass())({memberUuid:'Item.missing'})._renderHTML();
+ assert.equal(descendants(root).find(n=>n.className==='ts-error').textContent,'TRUESIGHT.Exclusion.ContextUnavailable');
+ assert.equal(descendants(root).some(n=>n.className==='ts-row'&&n.attributes['aria-pressed']==='true'),false);
+ assert.equal(findButton(root,'Exclusion.Exclude'),undefined);
+ assert.throws(()=>new (reviewWindowClass())({memberUuid:3}),/invalid-options/);
+});
+
+test('context navigation finds groups beyond the first page and tracks independent members',async t=>{
+ const {spell}=await import('./catalog-fixture.mjs');
+ const rows=Array.from({length:60},(_,i)=>['a','b'].map(suffix=>spell(`${i}${suffix}`,{name:`Spell ${i}`,system:{identifier:`spell-${i}`}}))).flat();
+ const service=new CatalogService({index:()=>({status:'ready',results:rows}),environment:()=>groupingFixture().environment,load:()=>null,save:async()=>{}});
+ await service.apply(service.preview().id);uiFixture(t,service);
+ const group=[...service.read().groups.values()][55],uuid=group.members[0];
+ let root=await new (reviewWindowClass())({memberUuid:uuid})._renderHTML();
+ assert.equal(descendants(root).find(n=>n.className==='ts-row'&&n.attributes['aria-pressed']==='true').attributes['data-row-key'],group.key);
+ assert.ok(descendants(root).some(n=>n.textContent==='2 / 2'));
+ await service.apply(service.previewExclusion({uuid,excluded:true}).id);
+ root=await new (reviewWindowClass())({memberUuid:uuid})._renderHTML();
+ assert.equal(descendants(root).find(n=>n.className==='ts-row'&&n.attributes['aria-pressed']==='true').attributes['data-row-key'],uuid);
+ assert.ok(findButton(root,'Exclusion.Restore'));
+});

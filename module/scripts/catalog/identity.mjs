@@ -220,7 +220,7 @@ export function buildDescribedGroupingCatalog(described,snapshot=null,preference
     if(snapshot?.ruleVersion===GROUP_RULE_VERSION&&current&&(!entry.warning||manual)&&!excluded.has(entry.uuid)&&group?.members.includes(entry.uuid)) {
       entry.key=previous.key;entry.risk=group.risk;entry.kind=group.kind;addTo(groups,entry.key,entry);
     } else if(current&&previous?.warning&&previous.warning!=="excluded"&&!entry.warning)entry.warning=previous.warning;
-    entry.reason=entry.key?null:entry.warning??(current?previous.reason:'awaiting-review');
+    entry.reason=entry.key?null:entry.warning??(current&&previous.reason!=='excluded'?previous.reason:'awaiting-review');
   }
   for(const uuid of Object.keys(snapshot?.records??{}))if(!entries.has(uuid))changed++;
   return {entries,groups,changed};

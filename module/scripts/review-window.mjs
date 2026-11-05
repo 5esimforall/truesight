@@ -7,10 +7,17 @@ const node = (tag, text, cls) => {const el=document.createElement(tag);if(text)e
 export function reviewWindowClass() {
  return class ReviewWindow extends foundry.applications.api.ApplicationV2 {
   static DEFAULT_OPTIONS={classes:['truesight-review','truesight-theme'],window:{title:'TRUESIGHT.Menu.Name',resizable:true,minimizable:true},position:{width:880,height:680}};
-  constructor(options={}) {super({...options,window:{...options.window,title:t('Menu.Name')}});}
+  constructor({memberUuid = null, ...options}={}) {
+   super({...options,window:{...options.window,title:t('Menu.Name')}});
+   if (memberUuid !== null && (typeof memberUuid !== 'string' || !memberUuid.trim())) throw new Error(t('Error.invalid-options'));
+   this.memberUuid = memberUuid;
+   this.focusContext = Boolean(memberUuid);
+   this.returnFocus = memberUuid ? globalThis.document?.activeElement : null;
+  }
   async _renderHTML() {
    if (!catalog.getStatus().canManage) throw new Error(t('UI.Forbidden'));
    let view, preview=null, mode='current', filter='all', page=0, selected=null, busy=false, pairOffset=0;
+   let locateUuid = this.memberUuid, focusPreview=false, focusSelection=false;
    const nameDrafts=new Map();
    const root=node('div',null,'ts-review'), toolbar=node('header',null,'ts-toolbar'), tabs=node('nav',null,'ts-tabs'), filters=node('nav',null,'ts-filters');
    const message=node('p',null,'ts-message');message.setAttribute('role','status');
@@ -21,7 +28,7 @@ export function reviewWindowClass() {
    detail.setAttribute('aria-label',t('UI.Details'));
    const footer=node('footer',null,'ts-footer'), summary=node('span'), actions=node('div',null,'ts-actions');
    const ruleEvidence=new Map();
-   const button=(key,action)=>{const b=node('button',t(key));b.type='button';b.onclick=async()=>{if(busy)return;const focusKey=document.activeElement===b?b.getAttribute?.('data-ts-focus'):null;busy=true;error.textContent='';refreshActions();try{await action();}catch(e){if(e.code==='preview-stale'){resetPreview();load();}error.textContent=t('Grouping.Error',{message:game.i18n.has?.(`TRUESIGHT.Error.${e.code}`)?t(`Error.${e.code}`):e.message});}finally{busy=false;render();if(focusKey)[...(root.querySelectorAll?.('[data-ts-focus]')??[])].find(el=>el.getAttribute('data-ts-focus')===focusKey)?.focus({preventScroll:true});}};return b;};
+   const button=(key,action)=>{const b=node('button',t(key));b.type='button';b.onclick=async()=>{if(busy||b.disabled)return;const focusKey=document.activeElement===b?b.getAttribute?.('data-ts-focus'):null;busy=true;error.textContent='';refreshActions();try{await action();}catch(e){if(e.code==='preview-stale'){resetPreview();load();}error.textContent=t('Grouping.Error',{message:game.i18n.has?.(`TRUESIGHT.Error.${e.code}`)?t(`Error.${e.code}`):e.message});}finally{busy=false;render();if(focusPreview){detail.querySelector?.('.ts-exclusion-preview')?.focus();focusPreview=false;}else if(focusSelection){list.querySelector?.('.ts-row[aria-pressed=true]')?.focus();focusSelection=false;}else if(focusKey)[...(root.querySelectorAll?.('[data-ts-focus]')??[])].find(el=>el.getAttribute('data-ts-focus')===focusKey)?.focus({preventScroll:true});}};return b;};
    const risk=node('input');risk.type='checkbox';risk.checked=catalog.getStatus().includeRisk;
    const options=node('details',null,'ts-options'), optionLabel=node('label');optionLabel.append(risk,node('span',t('Grouping.IncludeRisk')));const optionMenu=node('div',null,'ts-menu');optionMenu.append(optionLabel);options.append(node('summary',t('UI.Options')),optionMenu);
    const resetPreview=()=>{preview=null;mode='current';filter='all';page=0;selected=null;};
@@ -29,18 +36,17 @@ export function reviewWindowClass() {
    const rebuild=button('UI.Recalculate',async()=>{message.textContent=t('UI.Computing');await catalog.whenReady();view=catalog.read();preview=catalog.preview({includeRisk:risk.checked});mode='preview';filter='changes';page=0;selected=null;render();});
    const current=button('UI.Current',()=>{mode='current';filter=filter==='names'?'names':'all';page=0;selected=null;render();});
    const pending=button('UI.Preview',()=>{mode='preview';filter='changes';page=0;selected=null;render();});
-   const discard=button('UI.Discard',()=>{const names=filter==='names';resetPreview();if(names)filter='names';render();});
-   const apply=button('UI.Apply',async()=>{message.textContent=t('UI.Saving');const names=filter==='names';await catalog.apply(preview.id);resetPreview();if(names)filter='names';load();});apply.className='ts-primary';
+   const discard=button('UI.Discard',()=>{const names=filter==='names',target=preview?.exclusion?.request.uuid;resetPreview();if(names)filter='names';if(target){locateUuid=target;focusSelection=true;}render();});
+   const apply=button('UI.Apply',async()=>{message.textContent=t('UI.Saving');const names=filter==='names',target=preview.exclusion?.request.uuid;await catalog.apply(preview.id);resetPreview();if(names)filter='names';if(target){locateUuid=target;focusSelection=true;}load();});apply.className='ts-primary';
    const undo=button('Grouping.Undo',async()=>{await catalog.undo();resetPreview();load();});
-   const restore=button('Grouping.RestoreExcluded',async()=>{await catalog.restoreExcluded();resetPreview();load();});
    const excluded=button('UI.Excluded',()=>{mode='current';filter='excluded';page=0;selected=null;render();});
    const decisions=button('Names.Decisions',()=>{mode='current';filter='decisions';page=0;selected=null;render();});
-   const more=node('details',null,'ts-options');const moreMenu=node('div',null,'ts-menu');moreMenu.append(decisions,excluded,undo,restore);more.append(node('summary',t('UI.More')),moreMenu);
+   const more=node('details',null,'ts-options');const moreMenu=node('div',null,'ts-menu');moreMenu.append(decisions,excluded,undo);more.append(node('summary',t('UI.More')),moreMenu);
    tabs.append(current,pending);toolbar.append(tabs,options,rebuild,more);
    const choices=['names','all','changes','added','adjusted','removed','risk','independent'];const filterButtons=new Map();
    for(const key of choices){const b=button(`UI.Filter.${key}`,()=>{filter=key;page=0;selected=null;pairOffset=0;render();});filterButtons.set(key,b);filters.append(b);}
    const prev=button('UI.Previous',()=>{page--;render();}), next=button('UI.Next',()=>{page++;render();}), pageLabel=node('span');pagination.append(prev,pageLabel,next);
-   const refreshActions=()=>{const s=catalog.getStatus();rebuild.disabled=busy||!['ready','unreviewed'].includes(s.status);apply.disabled=busy||!s.canPublish||!preview||mode!=='preview';discard.disabled=busy;pending.disabled=busy||!preview;current.disabled=busy;undo.disabled=busy||!s.canPublish||!s.canUndo;restore.disabled=busy||!s.canPublish||!view?.excludedCount;risk.disabled=busy;for(const b of filterButtons.values())b.disabled=busy;};
+   const refreshActions=()=>{const s=catalog.getStatus();rebuild.disabled=busy||!['ready','unreviewed'].includes(s.status);apply.disabled=busy||!s.canPublish||!preview||mode!=='preview';discard.disabled=busy;pending.disabled=busy||!preview;current.disabled=busy;undo.disabled=busy||!s.canPublish||!s.canUndo;risk.disabled=busy;for(const b of filterButtons.values())b.disabled=busy;};
    const member=(id)=>{
     const e=view.entries.get(id),card=node('article',null,'ts-member'),row=node('div',null,'ts-member-row');
     if(e?.img){const image=node('img',null,'ts-member-image');image.src=e.img;image.alt='';image.loading='lazy';image.onerror=()=>{image.hidden=true;};row.append(image);}
@@ -52,10 +58,41 @@ export function reviewWindowClass() {
     for(const data of memberSources(source,status=>t('UI.Source.'+status))){const badge=node('span',data.label,'ts-source'+(data.warning?' ts-source-warning':''));badge.title=data.title||data.label;badges.append(badge);}
     row.append(badges);card.append(row);
     const tech=node('details',null,'ts-technical');tech.append(node('summary',t('UI.Technical')),node('code',id));
-    const copy=button('UI.Copy',()=>navigator.clipboard.writeText(id));tech.append(copy);card.append(tech);return card;
+    const copy=button('UI.Copy',()=>navigator.clipboard.writeText(id));tech.append(copy);card.append(tech);
+    if(mode==='current' && (e?.key || e?.reason==='excluded')) {
+      const advanced=node('details',null,'ts-exclusion-actions');
+      advanced.append(node('summary',t('Exclusion.Advanced')),node('p',t('Exclusion.Scope')));
+      const restore=e.reason==='excluded';
+      const action=button(restore?'Exclusion.Restore':'Exclusion.Exclude',()=>{
+        preview=catalog.previewExclusion({uuid:id,excluded:!restore});focusPreview=true;mode='preview';filter='all';page=0;selected=null;render();
+      });
+      action.setAttribute('data-ts-focus',`exclusion:${id}`);
+      advanced.append(action);card.append(advanced);
+    }
+    return card;
    };
    const showDetail=row=>{detail.replaceChildren();
     if(mode==='preview')renderDecisionPreview({preview,detail,view,t,node});
+    if(mode==='preview' && preview?.exclusion) {
+      const change=preview.exclusion,section=node('section',null,'ts-risk ts-exclusion-preview');
+      section.setAttribute('role','status');section.tabIndex=-1;
+      section.append(node('h2',t(change.request.excluded?'Exclusion.PreviewExclude':'Exclusion.PreviewRestore')),
+        node('p',t('Exclusion.Scope')),node('h3',t('Exclusion.Target')),member(change.request.uuid),
+        node('h3',t('UI.Before')));
+      for(const id of change.beforeMembers)section.append(member(id));
+      section.append(node('h3',t('UI.After')));
+      const affected=new Set(change.members);
+      for(const group of preview.groups.filter(g=>g.members.some(m=>affected.has(m.uuid)))) {
+        const groupSection=node('section',null,'ts-exclusion-group');
+        groupSection.append(node('h4',t('UI.Members',{count:group.members.length})));
+        for(const m of group.members)groupSection.append(member(m.uuid));section.append(groupSection);
+      }
+      for(const item of preview.independent.filter(e=>affected.has(e.uuid))) {
+        section.append(node('p',t('Grouping.Review.'+item.reason)),member(item.uuid));
+      }
+      section.append(node('p',t(change.request.excluded?'Exclusion.ExcludeEffect':change.restored?'Exclusion.RestoreEffect':'Exclusion.RestorePending')));
+      detail.append(section);return;
+    }
     if(row?.nameDecision){
       detail.append(node('h2',row.name),node('p',t('Names.Decision.'+row.kind)),node('p',row.reason),node('p',t(row.current?'Names.EvidenceCurrent':'Names.EvidenceChanged')));
       for(const [index,side] of (row.sides??[row.members]).entries()){if(row.sides)detail.append(node('h3',t('Names.Side',{number:index+1})));for(const id of side)detail.append(member(id));}
@@ -80,6 +117,7 @@ export function reviewWindowClass() {
     if(row.change==='removed')detail.append(node('p',t('UI.Dissolved')));else for(const id of row.members)detail.append(member(id));
    };
    const render=()=>{
+    if(!catalog.getStatus().canManage){void this.close();return;}
     const isPreview=mode==='preview'&&preview;current.setAttribute('aria-pressed',String(!isPreview));pending.setAttribute('aria-pressed',String(Boolean(isPreview)));
     apply.hidden=discard.hidden=!isPreview;
     const status=catalog.getStatus();
@@ -87,6 +125,17 @@ export function reviewWindowClass() {
     const focusedRow=document.activeElement?.getAttribute?.('data-row-key');
     list.replaceChildren();if(!view){detail.replaceChildren();summary.textContent='';prev.disabled=next.disabled=true;refreshActions();return;}
     const rows=reviewRows(view,isPreview?preview:null);
+    let contextMissing=false;
+    if(locateUuid) {
+      const target=rows.find(row=>row.members.includes(locateUuid));
+      if(target) {
+        filter=target.independent?(target.reason==='excluded'?'excluded':'independent'):'all';
+        search.value='';reason.value='';selected=target.key;
+        page=Math.floor(filterReviewRows(rows,view,filter).findIndex(row=>row.key===target.key)/50);
+        error.textContent='';
+      } else {contextMissing=true;error.textContent=t('Exclusion.ContextUnavailable');}
+      locateUuid=null;
+    }
     const names=catalog.readNameReview({previewId:isPreview?preview.id:undefined});
     const nameRows=names.sets.map(set=>({...set,nameReview:true}));
     const matchedNames=nameRows.filter(row=>!search.value.trim()||[row.name,...row.matches,...row.members.flatMap(id=>view.entries.get(id)?.names??[])].join(' ').toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase()));
@@ -96,7 +145,7 @@ export function reviewWindowClass() {
     const visible=filter==='decisions'?decisionRows:filter==='names'?matchedNames:filterReviewRows(rows,view,filter,search.value).filter(row=>filter!=='independent'||!reason.value||row.reason===reason.value);
     for(const [key,b]of filterButtons){b.hidden=!isPreview&&['changes','added','adjusted','removed'].includes(key);b.setAttribute('aria-pressed',String(filter===key));b.textContent=`${t('UI.Filter.'+key)} · ${key==='names'?names.count:filterReviewRows(rows,view,key).length}`;}
     page=Math.max(0,Math.min(page,Math.ceil(visible.length/50)-1));const slice=visible.slice(page*50,page*50+50);
-    if(!slice.some(r=>r.key===selected)){selected=slice[0]?.key;pairOffset=0;}
+    if(!slice.some(r=>r.key===selected)){selected=contextMissing?null:slice[0]?.key;pairOffset=0;}
     for(const row of slice){const b=button('UI.Select',()=>{selected=row.key;pairOffset=0;render();});b.className='ts-row';b.setAttribute('data-row-key',row.key);b.setAttribute('aria-pressed',String(selected===row.key));b.title=row.name;b.replaceChildren(node('strong',row.name),node('span',[row.rules,row.nameReview?t('Names.SetSummary',{entries:row.entryCount,groups:row.groupCount}):t('UI.Members',{count:row.members.length}),isPreview&&!row.nameReview?t('UI.Change.'+row.change):row.risk?'⚠':''].filter(Boolean).join(' · ')));if(row.nameReview){const clues=[...row.differences.map(field=>t('Names.Field.'+field)),...row.warnings.map(code=>t('Grouping.Review.'+code))].join(' · ');if(clues){const note=node('span',t('Names.Clues',{clues}));note.title=note.textContent;b.append(note);}}list.append(b);if(focusedRow===row.key)b.focus();}
     if(!slice.length)list.append(node('p',t(!view.reviewed&&!isPreview&&filter==='all'&&!search.value?'UI.Empty':'UI.NoResults')));
     prev.disabled=page===0;next.disabled=(page+1)*50>=visible.length;pageLabel.textContent=`${page+1} / ${Math.max(1,Math.ceil(visible.length/50))}`;
@@ -114,6 +163,13 @@ export function reviewWindowClass() {
    load();return root;
   }
   _replaceHTML(content,host){host.replaceChildren(content);}
-  _onClose(options){Hooks.off('truesightChanged',this.reviewHook);this.reviewHook=null;super._onClose(options);}
+  async _onRender(context, options) {
+   await super._onRender(context, options);
+   if(this.focusContext) {
+    (this.element.querySelector('.ts-row[aria-pressed=true]')??this.element.querySelector('input[type=search]'))?.focus();
+    this.focusContext=false;
+   }
+  }
+  _onClose(options){Hooks.off('truesightChanged',this.reviewHook);this.reviewHook=null;super._onClose(options);if(this.returnFocus?.isConnected)this.returnFocus.focus({preventScroll:true});}
  };
 }

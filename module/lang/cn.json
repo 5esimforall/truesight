@@ -35,7 +35,6 @@
   "TRUESIGHT.Grouping.Title": "归组",
   "TRUESIGHT.Grouping.Rebuild": "重新归组…",
   "TRUESIGHT.Grouping.Undo": "撤销上次归组",
-  "TRUESIGHT.Grouping.RestoreExcluded": "恢复手动排除的成员",
   "TRUESIGHT.Grouping.Exclude": "保持独立",
   "TRUESIGHT.Grouping.NotBuilt": "尚未建立归组。点击重新归组预览；应用前条目保持独立。",
   "TRUESIGHT.Grouping.Changed": "归组数据有变化（{count} 个条目），可重新归组。",
@@ -233,5 +232,18 @@
   "TRUESIGHT.Names.UsageConfig": "条目实现配置（不等同于规则正文）",
   "TRUESIGHT.Names.ProviderTrace": "身份来源：{provider} · {owner} · {source} · {uid}",
   "TRUESIGHT.Names.ScaleSource": "成长配置来源：{name} · {uuid}",
-  "TRUESIGHT.Names.CompareRules": "对照规则内容"
+  "TRUESIGHT.Names.CompareRules": "对照规则内容",
+  "TRUESIGHT.Exclusion.Advanced": "身份管理（高级）",
+  "TRUESIGHT.Exclusion.Scope": "这些操作修改当前世界所有客户端共享的归组与名称解析，不改变原始文档，也不代表已确认内容不同。",
+  "TRUESIGHT.Exclusion.Exclude": "预览排除该条目…",
+  "TRUESIGHT.Exclusion.Restore": "预览恢复该条目…",
+  "TRUESIGHT.Exclusion.PreviewExclude": "待应用：排除一个条目",
+  "TRUESIGHT.Exclusion.PreviewRestore": "待应用：恢复一个条目",
+  "TRUESIGHT.Exclusion.Target": "操作对象",
+  "TRUESIGHT.Exclusion.ExcludeEffect": "应用后，该条目持续排除于归组之外，重新计算也会保留排除。其余成员保留原关系。可在“更多操作 → 已排除条目”中逐条恢复。",
+  "TRUESIGHT.Exclusion.RestoreEffect": "应用后，仅解除该条目的人工排除，并恢复预览中仍然有效的原成员关系；其他排除不变。",
+  "TRUESIGHT.Exclusion.RestorePending": "应用后，仅解除该条目的人工排除。当前没有可恢复的有效归组；该条目保持独立，需另行重新计算并审核。其他排除不变。",
+  "TRUESIGHT.Exclusion.ContextUnavailable": "指定条目已不在当前可见索引中，无法定位。请返回搜索结果重新检查。",
+  "TRUESIGHT.Error.not-excluded": "该条目未被人工排除。",
+  "TRUESIGHT.Error.outside-index": "条目不在当前可见索引中。"
 }

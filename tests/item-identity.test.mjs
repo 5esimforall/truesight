@@ -198,7 +198,7 @@ test('malformed metadata, source conflicts and direct provenance never create un
 test('changing permissions, exclusions, missing members and reload preserve feature review boundaries',async()=>{
   let rows=indomitable();const s=new CatalogService({index:()=>({results:rows}),environment:()=>environment,load:()=>null,save:async x=>x});
   await s.apply(s.preview().id);const key=s.getMember(uuid('gps')).key;
-  await s.exclude(uuid('gps'));assert.equal(s.getMember(uuid('gps')).reason,'excluded');await s.undo();
+  await s.apply(s.previewExclusion({uuid:uuid('gps'), excluded:true}).id);assert.equal(s.getMember(uuid('gps')).reason,'excluded');await s.undo();
   rows=rows.filter(r=>r.item.uuid!==uuid('cn'));rows.push(item('new'));
   await s.apply(s.preview().id);
   assert.ok(s.state.active.groups[key].members.includes(uuid('cn')));

@@ -43,11 +43,11 @@ test('world publication, exclusion and undo propagate; players consume but canno
   assert.equal(player.runtime.read().groups.size,3);assert.equal(other.runtime.read().revision,1);
   assert.equal(player.runtime.getStatus().scope,'world');assert.equal(player.runtime.getStatus().canUndo,undefined);
   assert.throws(()=>player.runtime.preview(),{code:'review-forbidden'});
-  for(const method of [()=>player.runtime.apply('1'),()=>player.runtime.undo(),()=>player.runtime.exclude('x'),()=>player.runtime.restoreExcluded()]) await assert.rejects(method,{code:'review-forbidden'});
+  for(const method of [()=>player.runtime.apply('1'),()=>player.runtime.undo(),async()=>player.runtime.previewExclusion({uuid:'x',excluded:true}),async()=>player.runtime.previewExclusion({uuid:'x',excluded:false})]) await assert.rejects(method,{code:'review-forbidden'});
   connectCatalog(player.runtime,()=>assert.fail('must not open'));
   assert.throws(()=>catalog.openReview(),{code:'review-forbidden'});
   const otherPreview=other.runtime.preview();await assert.rejects(other.runtime.apply(otherPreview.id),{code:'publisher-other-gm'});
-  const id=gm.f.rows[0].item.uuid;await gm.runtime.exclude(id);
+  const id=gm.f.rows[0].item.uuid;await gm.runtime.apply(gm.runtime.previewExclusion({uuid:id,excluded:true}).id);
   assert.equal(player.runtime.getMember(id).key,null);await gm.runtime.undo();assert.ok(player.runtime.getMember(id).key);
   assert.ok(player.notices.every(n=>!JSON.stringify(n).includes('Compendium.')));
   const state=w.values.get('truesight.review');assert.equal(state.publisherId,'gm');assert.ok(state.publishedAt>0);
@@ -61,7 +61,7 @@ test('external publication invalidates old previews and does not permit stale co
   const w=world(),gm=w.create('gm',true),other=w.create('gm2',true);
   const preview=other.runtime.preview();await apply(gm.runtime);
   await assert.rejects(other.runtime.apply(preview.id),{code:'preview-stale'});
-  const first=structuredClone(w.values.get('truesight.review'));await gm.runtime.exclude(gm.f.rows[0].item.uuid);
+  const first=structuredClone(w.values.get('truesight.review'));await gm.runtime.apply(gm.runtime.previewExclusion({uuid:gm.f.rows[0].item.uuid,excluded:true}).id);
   other.runtime.receive(first);assert.equal(other.runtime.state.revision,2);
   other.runtime.receive({...other.runtime.state,excluded:[]});assert.equal(other.runtime.getStatus().reason,'review-conflict');
 });
@@ -78,7 +78,7 @@ test('failed or concurrent saves retain the last confirmed state', async () => {
 
 test('recalculation preserves absent relationships, exclusions and undo without inventing new links', async () => {
   const w=world(),gm=w.create('gm',true);await apply(gm.runtime);
-  const missing=gm.f.rows[0],visible=gm.f.rows[1];await gm.runtime.exclude(missing.item.uuid);
+  const missing=gm.f.rows[0],visible=gm.f.rows[1];await gm.runtime.apply(gm.runtime.previewExclusion({uuid:missing.item.uuid,excluded:true}).id);
   gm.f.rows=gm.f.rows.slice(1);gm.f.rows.push(spell('new'));
   gm.runtime.invalidate('index');const preview=gm.runtime.preview({includeRisk:true});assert.equal(preview.retained,1);
   await gm.runtime.apply(preview.id);

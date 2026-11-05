@@ -105,7 +105,7 @@ test('permissions, publication, names and stale index evidence guard both decisi
 test('explicit generation boundaries and exclusions cannot be bypassed through a manual merge',async()=>{
  const s=fixture([spell('a'),spell('b',{system:{source:{rules:'2024',book:'PHB 2024'}}})]).service;
  assert.throws(()=>s.previewNameDecision(same('a','b')),{code:'separation-conflict'});
- const f=fixture([spell('a'),spell('b'),spell('c',{system:{identifier:'another'}})]);await apply(f.service);await f.service.exclude(id('a'));
+ const f=fixture([spell('a'),spell('b'),spell('c',{system:{identifier:'another'}})]);await apply(f.service);await f.service.apply(f.service.previewExclusion({uuid:id('a'), excluded:true}).id);
  assert.throws(()=>f.service.previewNameDecision(same('a','c')),{code:'excluded-decision'});
  assert.equal(pending(f.service).length,1,'exclusion does not confirm distinct identity');
 });

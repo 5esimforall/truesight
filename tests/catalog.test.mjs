@@ -106,9 +106,9 @@ test('denied members disappear from reads but world review preserves absent rela
 
 test('identity exclusion is shared and undoable, not a browser preference', async () => {
   const f=fixture();await f.apply();const uuid=f.rows[0].item.uuid;
-  await f.service.exclude(uuid);assert.equal(f.service.getMember(uuid).key,null);
+  await f.service.apply(f.service.previewExclusion({uuid, excluded:true}).id);assert.equal(f.service.getMember(uuid).key,null);
   assert.equal(f.service.read().excludedCount,1);await f.service.undo();assert.ok(f.service.getMember(uuid).key);
-  await f.service.exclude(uuid);await f.service.restoreExcluded();assert.ok(f.service.getMember(uuid).key);
+  await f.service.apply(f.service.previewExclusion({uuid, excluded:true}).id);await f.service.apply(f.service.previewExclusion({uuid, excluded:false}).id);assert.ok(f.service.getMember(uuid).key);
 });
 
 test('corrupt or incompatible persisted review is an explicit failure, not no-review', () => {
@@ -285,4 +285,56 @@ test('late cleanup receipts cannot overwrite a newer review and players cannot c
   f.service.receive({schemaVersion:1,revision:5,active:null,previous:null,excluded:[]});
   finish();await clearing;
   assert.equal(f.service.state.revision,5);assert.equal(f.service.failure,null);f.service.dispose();
+});
+
+test('exclusion previews are read-only, show full effects and restore only the selected UUID', async () => {
+  const f=fixture();await f.apply();const [a,b]=f.rows.map(r=>r.item.uuid),s=f.service;
+  const original=s.getMember(a).key,revision=s.state.revision;
+  const p=s.previewExclusion({uuid:a,excluded:true});
+  assert.equal(s.state.revision,revision);assert.equal(s.getMember(a).key,original);
+  assert.deepEqual(p.exclusion.beforeMembers.sort(),[a,b].sort());
+  assert.equal(p.independent.find(e=>e.uuid===a).reason,'excluded');
+  assert.deepEqual(p.groups.find(g=>g.key===original).members.map(m=>m.uuid),[b]);
+  await s.apply(p.id);await s.apply(s.previewExclusion({uuid:b,excluded:true}).id);
+  const restore=s.previewExclusion({uuid:a,excluded:false});
+  assert.equal(s.getMember(a).reason,'excluded');assert.equal(restore.exclusion.restored,true);
+  await s.apply(restore.id);
+  assert.equal(s.getMember(a).key,original);assert.equal(s.getMember(b).reason,'excluded');
+  assert.deepEqual(s.state.excluded,[b]);await s.undo();assert.deepEqual(s.state.excluded,[a,b]);
+});
+
+test('restoration after recalculation removes quarantine without inventing membership or an excluded reason', async () => {
+  const f=fixture();await f.apply();const uuid=f.rows[0].item.uuid,s=f.service;
+  await s.apply(s.previewExclusion({uuid,excluded:true}).id);await f.apply();
+  const p=s.previewExclusion({uuid,excluded:false});assert.equal(p.exclusion.restored,false);
+  assert.equal(p.independent.find(e=>e.uuid===uuid).reason,'awaiting-review');
+  await s.apply(p.id);assert.equal(s.getMember(uuid).key,null);assert.equal(s.getMember(uuid).reason,'awaiting-review');
+  assert.throws(()=>s.previewExclusion({uuid,excluded:false}),{code:'not-excluded'});
+  await f.apply();assert.ok(s.getMember(uuid).key);
+});
+
+test('exclusion rejects malformed, absent, nonmember and incomplete-group targets', async () => {
+  const f=fixture(),s=f.service,uuid=f.rows[0].item.uuid;
+  for(const request of [null,{},[],{uuid,excluded:'true'},{uuid:'',excluded:true},{uuid,excluded:true,extra:1}]) {
+    assert.throws(()=>s.previewExclusion(request),{code:'invalid-options'});
+  }
+  assert.throws(()=>s.previewExclusion({uuid,excluded:true}),{code:'not-a-member'});
+  assert.throws(()=>s.previewExclusion({uuid:'Item.missing',excluded:true}),{code:'outside-index'});
+  await f.apply();f.rows.splice(1,1);
+  assert.throws(()=>s.previewExclusion({uuid,excluded:true}),{code:'incomplete-group'});
+});
+
+test('exclusion apply revalidates evidence, access, revisions, publishing authority and failed saves', async () => {
+  for(const mutation of ['evidence','access','review','publisher','storage']) {
+    const f=fixture();await f.apply();const s=f.service,uuid=f.rows[0].item.uuid;
+    const p=s.previewExclusion({uuid,excluded:true});
+    if(mutation==='evidence')f.rows[0].item.system.level=2;
+    if(mutation==='access')f.rows.shift();
+    if(mutation==='review')await f.apply();
+    if(mutation==='publisher')s.publication=()=>({canPublish:false,publishReason:'review-forbidden'});
+    if(mutation==='storage')f.failSave=true;
+    const before=structuredClone(s.state);
+    await assert.rejects(s.apply(p.id),mutation==='storage'?/quota/:{code:mutation==='publisher'?'review-forbidden':'preview-stale'});
+    assert.deepEqual(s.state,before);
+  }
 });

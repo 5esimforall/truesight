@@ -35,7 +35,6 @@
   "TRUESIGHT.Grouping.Title": "Grouping",
   "TRUESIGHT.Grouping.Rebuild": "Recalculate groups…",
   "TRUESIGHT.Grouping.Undo": "Undo last regrouping",
-  "TRUESIGHT.Grouping.RestoreExcluded": "Restore excluded members",
   "TRUESIGHT.Grouping.Exclude": "Keep separate",
   "TRUESIGHT.Grouping.NotBuilt": "No grouping cache yet. Recalculate to preview; entries remain separate until applied.",
   "TRUESIGHT.Grouping.Changed": "Grouping data changed ({count} entries). Recalculate when ready.",
@@ -233,5 +232,18 @@
   "TRUESIGHT.Names.UsageConfig": "Implementation settings (not rule text)",
   "TRUESIGHT.Names.ProviderTrace": "Identity source: {provider} · {owner} · {source} · {uid}",
   "TRUESIGHT.Names.ScaleSource": "Progression source: {name} · {uuid}",
-  "TRUESIGHT.Names.CompareRules": "Compare rule content"
+  "TRUESIGHT.Names.CompareRules": "Compare rule content",
+  "TRUESIGHT.Exclusion.Advanced": "Identity management (advanced)",
+  "TRUESIGHT.Exclusion.Scope": "These operations change shared grouping and name resolution for every client in this world. They do not modify documents or confirm that content differs.",
+  "TRUESIGHT.Exclusion.Exclude": "Preview exclusion…",
+  "TRUESIGHT.Exclusion.Restore": "Preview restoration…",
+  "TRUESIGHT.Exclusion.PreviewExclude": "Pending: exclude one entry",
+  "TRUESIGHT.Exclusion.PreviewRestore": "Pending: restore one entry",
+  "TRUESIGHT.Exclusion.Target": "Target entry",
+  "TRUESIGHT.Exclusion.ExcludeEffect": "After applying, this entry stays excluded from grouping, including future recalculations. Other members keep their relationships. Restore individual entries under More actions → Excluded entries.",
+  "TRUESIGHT.Exclusion.RestoreEffect": "Only this entry’s exclusion will be removed and the still-valid membership shown here restored. Other exclusions remain unchanged.",
+  "TRUESIGHT.Exclusion.RestorePending": "Only this entry’s exclusion will be removed. No valid membership can currently be restored; the entry stays independent until recalculated and reviewed. Other exclusions remain unchanged.",
+  "TRUESIGHT.Exclusion.ContextUnavailable": "The requested entry is no longer in the visible index. Return to the search results and inspect again.",
+  "TRUESIGHT.Error.not-excluded": "This entry is not manually excluded.",
+  "TRUESIGHT.Error.outside-index": "The entry is outside the visible index."
 }
