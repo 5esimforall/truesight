@@ -1,0 +1,105 @@
+.truesight-review {
+  /* Match Slow Insert while remaining independent of its stylesheet. */
+  color-scheme: var(--color-scheme, light);
+  --ts-bg: var(--qiBackground, light-dark(#dddddde3, #302831e3));
+  --ts-border: var(--qiBorderColor, #493a50);
+  --ts-line: color-mix(in srgb, var(--ts-text) 18%, transparent);
+  --ts-text: var(--color-text-primary, light-dark(#302831, #efe6d8));
+  --ts-muted: light-dark(#666666, #b6aebc);
+  --ts-accent: light-dark(var(--qiFilterAccent, #454159), #c6b5d7);
+  --ts-field: light-dark(#ffffff50, #00000022);
+  --ts-hover: var(--qiItemHoverColor, light-dark(#99944e29, #9979b924));
+  --ts-selected: var(--qiItemSelectedColor, light-dark(#99944e29, #b3a0c624));
+  --ts-selected-hover: var(--qiItemSelectedHoverColor, light-dark(#99944e3d, #9979b924));
+  --ts-focus: var(--qiBorderColorFocused, #624670);
+  --ts-warning: light-dark(#8b5b25, #e1b879);
+  --ts-danger: light-dark(#9a4352, #e39aa7);
+  --ts-preferred: light-dark(#88631f, #e3c278);
+  --ts-primary-text: light-dark(#ffffff, #302831);
+  color:var(--ts-text); background:var(--ts-bg);
+}
+.truesight-review .window-header { background:var(--ts-field); color:var(--ts-text); }
+.truesight-review .window-content { padding:14px; overflow:hidden; color:var(--ts-text); background:var(--ts-bg); }
+.truesight-review .ts-review { display:flex; flex-direction:column; gap:8px; height:100%; min-height:0; font:13px/1.4 var(--font-body, sans-serif); }
+.truesight-review .ts-review :is(button,input,select) { color:var(--ts-text); background:var(--ts-field); border:1px solid var(--ts-line); border-radius:5px; font:inherit; }
+.truesight-review .ts-review button { width:auto; height:auto; min-height:30px; flex:0 0 auto; line-height:1.4; padding:5px 10px; cursor:pointer; box-shadow:none; }
+.truesight-review .ts-review button:hover:not(:disabled) { background:var(--ts-hover); border-color:var(--ts-accent); }
+.truesight-review .ts-review button[aria-pressed=true] { background:var(--ts-selected); border-color:var(--ts-accent); }
+.truesight-review .ts-review button[aria-pressed=true]:hover:not(:disabled) { background:var(--ts-selected-hover); }
+.truesight-review .ts-review button:focus-visible, .truesight-review input:focus-visible, .truesight-review select:focus-visible, .truesight-review summary:focus-visible { outline:2px solid var(--ts-focus); outline-offset:2px; }
+.truesight-review .ts-review button:disabled { opacity:.45; cursor:default; }
+.truesight-review [hidden] { display:none!important; }
+.truesight-review :is(p,h2,h3) { margin:0; overflow-wrap:anywhere; }
+.truesight-review p { line-height:1.5; }
+.truesight-review h2 { font:600 17px/1.4 var(--font-body, sans-serif); border:0; }
+.truesight-review h3 { font-size:13px; margin-top:10px; border:0; }
+.truesight-review :is(.ts-toolbar,.ts-tabs,.ts-filters,.ts-actions,.ts-pagination,.ts-footer) { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.truesight-review .ts-toolbar { justify-content:flex-end; flex:none; }
+.truesight-review .ts-options { position:relative; }
+.truesight-review .ts-options summary { cursor:pointer; padding:6px; border:0; box-shadow:none; white-space:nowrap; font:inherit; }
+.truesight-review .ts-options .ts-menu { position:absolute; right:0; top:calc(100% + 5px); z-index:10; width:240px; padding:10px; background:light-dark(#eeeeee,#302831); border:1px solid var(--ts-line); border-radius:6px; box-shadow:0 5px 20px #0004; }
+.truesight-review .ts-options label { display:flex; align-items:center; gap:6px; max-width:260px; font-size:12px; }
+.truesight-review .ts-options button { display:block; width:100%; margin-top:4px; }
+.truesight-review .ts-message { font-size:12px; color:var(--ts-muted); }
+.truesight-review .ts-error { color:var(--ts-danger); font-size:12px; }
+.truesight-review .ts-error:empty { display:none; }
+.truesight-review .ts-filters button { font-size:11px; padding:3px 8px; min-height:26px; }
+.truesight-review input[type=search] { width:100%; padding:7px 10px; flex:none; }
+.truesight-review .ts-body { display:grid; grid-template-columns:minmax(180px, .8fr) minmax(240px,1.2fr); flex:1; min-height:0; border:1px solid var(--ts-line); border-radius:7px; overflow:hidden; }
+.truesight-review .ts-rail { display:flex; flex-direction:column; min-height:0; min-width:0; border-right:1px solid var(--ts-line); }
+.truesight-review .ts-list { flex:1; overflow:auto; padding:6px; min-height:0; }
+.truesight-review .ts-row { height:auto; min-height:54px; flex:0 0 auto; line-height:1.4; display:flex; flex-direction:column; align-items:flex-start; gap:5px; text-align:left; width:100%; margin:0 0 4px; padding:10px; }
+.truesight-review .ts-row strong { display:block; width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:14px; font-weight:400; line-height:1.4; }
+.truesight-review .ts-row span { display:block; max-width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; line-height:1.4; color:var(--ts-muted); font-size:11px; }
+.truesight-review .ts-pagination { justify-content:center; padding:7px; border-top:1px solid var(--ts-line); font-size:11px; }
+.truesight-review .ts-detail { min-height:0; min-width:0; overflow:auto; padding:12px; display:flex; flex-direction:column; gap:10px; background:var(--ts-field); }
+.truesight-review .ts-member { flex:none; min-width:0; border-bottom:1px solid var(--ts-line); padding:8px 0; }
+.truesight-review .ts-member p { color:var(--ts-muted); font-size:12px; margin:5px 0; }
+.truesight-review .ts-member details { font-size:11px; color:var(--ts-muted); }
+.truesight-review .ts-member summary { cursor:pointer; }
+.truesight-review code { display:block; overflow-wrap:anywhere; white-space:normal; padding:6px 0; }
+.truesight-review .ts-risk { padding:10px; border-left:3px solid var(--ts-warning); background:color-mix(in srgb, var(--ts-warning) 9%, transparent); font-size:12px; }
+.truesight-review .ts-footer { flex:none; justify-content:space-between; border-top:1px solid var(--ts-line); padding-top:10px; font-size:12px; }
+.truesight-review .ts-primary { background:var(--ts-accent); color:var(--ts-primary-text); border-color:var(--ts-accent); }
+.truesight-review .ts-primary:hover:not(:disabled) { background:color-mix(in srgb, var(--ts-accent) 85%, var(--ts-primary-text)); color:var(--ts-primary-text); }
+@media(max-width:600px) { .truesight-review .ts-body { grid-template-columns:minmax(120px,.7fr) minmax(160px,1fr); } .truesight-review .ts-detail { padding:10px; } }
+
+.truesight-review .window-header :is(.window-title,.header-control) { color:var(--ts-text); text-shadow:none; }
+.truesight-review .window-header .header-control:hover { background:var(--ts-hover); }
+.truesight-review .window-resize-handle { color:var(--ts-muted); }
+.truesight-review input[type=checkbox] { accent-color:var(--ts-accent); }
+.truesight-review select option { color:var(--ts-text); background:light-dark(#eeeeee,#302831); }
+.truesight-review code { color:var(--ts-text); background:var(--ts-field); }
+
+/* Bound our flex items explicitly: native buttons have fixed input height. */
+.truesight-review .ts-review, .truesight-review .ts-review * { box-sizing:border-box; }
+.truesight-review .ts-review > :not(.ts-body) { flex-shrink:0; }
+.truesight-review .ts-detail > * { flex-shrink:0; }
+.truesight-review .ts-detail h2 { color:var(--ts-text); }
+.truesight-review .ts-review .ts-row { height:auto; min-height:54px; justify-content:center; padding:7px 9px; gap:3px; }
+.truesight-review .ts-member-row { display:flex; align-items:center; gap:8px; min-width:0; min-height:42px; }
+.truesight-review .ts-member-image { flex:0 0 25px; width:25px; height:25px; object-fit:cover; border:0; border-radius:4px; }
+.truesight-review .ts-member-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+.truesight-review :is(.ts-member-name,.ts-member-subtitle) { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.truesight-review .ts-member-name { font-size:14px; line-height:1.4; }
+.truesight-review .ts-member-subtitle { font-size:11px; color:var(--ts-muted); line-height:1.4; }
+.truesight-review .ts-sources { flex:0 1 auto; max-width:38%; display:flex; flex-direction:column; align-items:flex-end; gap:3px; min-width:0; }
+.truesight-review .ts-source { display:block; max-width:100%; padding:2px 5px; border:1px solid var(--ts-line); border-radius:4px; background:var(--ts-field); color:var(--ts-muted); font:11px/1.3 var(--font-body, sans-serif); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.truesight-review .ts-source-warning { color:var(--ts-warning); }
+.truesight-review .ts-technical { margin-top:4px; }
+.truesight-review .ts-technical summary { border:0; box-shadow:none; padding:2px 0; font:11px/1.4 var(--font-body, sans-serif); }
+.truesight-review .ts-review .ts-technical button { font-size:11px; min-height:24px; padding:2px 6px; }
+.truesight-review .ts-review .ts-row { width:100%; border-color:transparent; background:transparent; }
+.truesight-review .ts-review .ts-row[aria-pressed=true] { background:var(--ts-selected); border-color:var(--ts-accent); }
+.truesight-review .ts-review .ts-row:hover:not(:disabled) { background:var(--ts-hover); }
+
+/* Disclosure geometry stays fixed; only the chevron rotates. */
+.truesight-review .ts-review details > summary { display:flex; align-items:center; gap:6px; list-style:none; }
+.truesight-review .ts-review details > summary::marker { content:""; }
+.truesight-review .ts-review details > summary::-webkit-details-marker { display:none; }
+.truesight-review .ts-review details > summary::before { content:""; display:block; flex:0 0 10px; width:10px; height:10px; background:currentColor; clip-path:polygon(30% 10%, 70% 50%, 30% 90%, 18% 78%, 46% 50%, 18% 22%); transform:rotate(0deg); transform-origin:center; }
+.truesight-review .ts-review details[open] > summary::before { transform:rotate(90deg); }
+
+.truesight-review .ts-toolbar > .ts-tabs { margin-right:auto; flex:0 0 auto; flex-wrap:nowrap; }
+
+.truesight-review .ts-message:empty { display:none; }
