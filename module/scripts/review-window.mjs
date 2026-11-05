@@ -8,6 +8,7 @@ export function reviewWindowClass() {
   static DEFAULT_OPTIONS={classes:['truesight-review'],window:{title:'TRUESIGHT.Menu.Name',resizable:true,minimizable:true},position:{width:880,height:680}};
   constructor(options={}) {super({...options,window:{...options.window,title:t('Menu.Name')}});}
   async _renderHTML() {
+   if (!catalog.getStatus().canManage) throw new Error(t('UI.Forbidden'));
    let view, preview=null, mode='current', filter='all', page=0, selected=null, busy=false;
    const root=node('div',null,'ts-review'), toolbar=node('header',null,'ts-toolbar'), tabs=node('nav',null,'ts-tabs'), filters=node('nav',null,'ts-filters');
    const message=node('p',null,'ts-message');message.setAttribute('role','status');
@@ -17,11 +18,11 @@ export function reviewWindowClass() {
    const body=node('div',null,'ts-body'), rail=node('div',null,'ts-rail'), list=node('div',null,'ts-list'), pagination=node('nav',null,'ts-pagination'), detail=node('section',null,'ts-detail');
    detail.setAttribute('aria-label',t('UI.Details'));
    const footer=node('footer',null,'ts-footer'), summary=node('span'), actions=node('div',null,'ts-actions');
-   const button=(key,action)=>{const b=node('button',t(key));b.type='button';b.onclick=async()=>{if(busy)return;busy=true;error.textContent='';refreshActions();try{await action();}catch(e){if(e.code==='preview-stale'){resetPreview();load();}error.textContent=t('Grouping.Error',{message:e.message});}finally{busy=false;render();}};return b;};
+   const button=(key,action)=>{const b=node('button',t(key));b.type='button';b.onclick=async()=>{if(busy)return;busy=true;error.textContent='';refreshActions();try{await action();}catch(e){if(e.code==='preview-stale'){resetPreview();load();}error.textContent=t('Grouping.Error',{message:game.i18n.has?.(`TRUESIGHT.Error.${e.code}`)?t(`Error.${e.code}`):e.message});}finally{busy=false;render();}};return b;};
    const risk=node('input');risk.type='checkbox';risk.checked=catalog.getStatus().includeRisk;
    const options=node('details',null,'ts-options'), optionLabel=node('label');optionLabel.append(risk,node('span',t('Grouping.IncludeRisk')));const optionMenu=node('div',null,'ts-menu');optionMenu.append(optionLabel);options.append(node('summary',t('UI.Options')),optionMenu);
    const resetPreview=()=>{preview=null;mode='current';filter='all';page=0;selected=null;};
-   const load=()=>{try{view=catalog.read();}catch(e){view=null;error.textContent=t('Grouping.Error',{message:e.message});}render();};
+   const load=()=>{try{view=catalog.read();}catch(e){view=null;error.textContent=t('Grouping.Error',{message:game.i18n.has?.(`TRUESIGHT.Error.${e.code}`)?t(`Error.${e.code}`):e.message});}render();};
    const rebuild=button('UI.Recalculate',async()=>{message.textContent=t('UI.Computing');await catalog.whenReady();view=catalog.read();preview=catalog.preview({includeRisk:risk.checked});mode='preview';filter='changes';page=0;selected=null;render();});
    const current=button('UI.Current',()=>{mode='current';filter='all';page=0;selected=null;render();});
    const pending=button('UI.Preview',()=>{mode='preview';filter='changes';page=0;selected=null;render();});
@@ -30,12 +31,13 @@ export function reviewWindowClass() {
    const undo=button('Grouping.Undo',async()=>{await catalog.undo();resetPreview();load();});
    const restore=button('Grouping.RestoreExcluded',async()=>{await catalog.restoreExcluded();resetPreview();load();});
    const excluded=button('UI.Excluded',()=>{mode='current';filter='excluded';page=0;selected=null;render();});
-   const more=node('details',null,'ts-options');const moreMenu=node('div',null,'ts-menu');moreMenu.append(excluded,undo,restore);more.append(node('summary',t('UI.More')),moreMenu);
+   const importLegacy=button('UI.ImportLegacy',()=>{preview=catalog.preview({importLegacy:true});view=catalog.read();mode='preview';filter='changes';page=0;selected=null;render();});
+   const more=node('details',null,'ts-options');const moreMenu=node('div',null,'ts-menu');moreMenu.append(excluded,undo,restore,importLegacy);more.append(node('summary',t('UI.More')),moreMenu);
    tabs.append(current,pending);toolbar.append(tabs,options,rebuild,more);
    const choices=['all','changes','added','adjusted','removed','risk','independent'];const filterButtons=new Map();
    for(const key of choices){const b=button(`UI.Filter.${key}`,()=>{filter=key;page=0;selected=null;render();});filterButtons.set(key,b);filters.append(b);}
    const prev=button('UI.Previous',()=>{page--;render();}), next=button('UI.Next',()=>{page++;render();}), pageLabel=node('span');pagination.append(prev,pageLabel,next);
-   const refreshActions=()=>{const s=catalog.getStatus();rebuild.disabled=busy||!['ready','unreviewed'].includes(s.status);apply.disabled=busy||!preview||mode!=='preview';discard.disabled=busy;pending.disabled=busy||!preview;current.disabled=busy;undo.disabled=busy||!s.canUndo;restore.disabled=busy||!view?.excludedCount;risk.disabled=busy;for(const b of filterButtons.values())b.disabled=busy;};
+   const refreshActions=()=>{const s=catalog.getStatus();rebuild.disabled=busy||!['ready','unreviewed'].includes(s.status);apply.disabled=busy||!s.canPublish||!preview||mode!=='preview';discard.disabled=busy;pending.disabled=busy||!preview;current.disabled=busy;undo.disabled=busy||!s.canPublish||!s.canUndo;restore.disabled=busy||!s.canPublish||!view?.excludedCount;importLegacy.hidden=!s.legacyAvailable;importLegacy.disabled=busy;risk.disabled=busy;for(const b of filterButtons.values())b.disabled=busy;};
    const member=(id)=>{
     const e=view.entries.get(id),card=node('article',null,'ts-member'),row=node('div',null,'ts-member-row');
     if(e?.img){const image=node('img',null,'ts-member-image');image.src=e.img;image.alt='';image.loading='lazy';image.onerror=()=>{image.hidden=true;};row.append(image);}
@@ -60,7 +62,8 @@ export function reviewWindowClass() {
    const render=()=>{
     const isPreview=mode==='preview'&&preview;current.setAttribute('aria-pressed',String(!isPreview));pending.setAttribute('aria-pressed',String(Boolean(isPreview)));
     apply.hidden=discard.hidden=!isPreview;
-    message.textContent='';
+    const status=catalog.getStatus();
+    message.textContent=preview?.importLegacy?t('UI.ImportHint',{count:preview.legacyExcluded}):preview?.retained?t('UI.Retained',{count:preview.retained}):status.canPublish?'':t(`Error.${status.publishReason}`);
     const focusedRow=document.activeElement?.getAttribute?.('data-row-key');
     list.replaceChildren();if(!view){detail.replaceChildren();summary.textContent='';prev.disabled=next.disabled=true;refreshActions();return;}
     const rows=reviewRows(view,isPreview?preview:null);
@@ -80,7 +83,7 @@ export function reviewWindowClass() {
    search.oninput=()=>{page=0;selected=null;render();};risk.onchange=()=>{if(preview){resetPreview();render();error.textContent=t('UI.Stale');}};
    rail.append(list,pagination);body.append(rail,detail);actions.append(discard,apply);footer.append(summary,actions);root.append(toolbar,message,search,filters,reason,error,body,footer);
    if(this.reviewHook)Hooks.off('truesightChanged',this.reviewHook);
-   this.reviewHook=Hooks.on('truesightChanged',change=>{const invalid=catalog.affects(change,['identity','access','review','sources']);const stale=invalid&&Boolean(preview);if(invalid)resetPreview();load();if(stale&&!busy)error.textContent=t('UI.Stale');});
+   this.reviewHook=Hooks.on('truesightChanged',change=>{if(!catalog.getStatus().canManage){void this.close();return;}const invalid=catalog.affects(change,['identity','access','review','sources','publication']);const stale=invalid&&Boolean(preview);if(invalid)resetPreview();load();if(stale&&!busy)error.textContent=t('UI.Stale');});
    for(const menu of [options,more])menu.ontoggle=()=>{if(menu.open)for(const other of [options,more])if(other!==menu)other.open=false;};
    root.addEventListener?.('click',event=>{if(!event.target.closest('.ts-options')){options.open=false;more.open=false;}});
    root.addEventListener?.('keydown',event=>{if(event.key==='Escape'&&(options.open||more.open)){const menu=options.open?options:more;menu.open=false;menu.querySelector('summary').focus();event.stopPropagation();}});

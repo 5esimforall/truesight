@@ -10,6 +10,6 @@ Hooks.once('init', () => {
   connectCatalog(runtime, options => new ReviewWindow(options).render({force: true}));
   game.modules.get('truesight').api = api;
   game.settings.registerMenu('truesight', 'review', {name: 'TRUESIGHT.Menu.Name', label: 'TRUESIGHT.Menu.Label',
-    hint: 'TRUESIGHT.Menu.Hint', icon: 'fas fa-eye', type: ReviewWindow, restricted: false});
+    hint: 'TRUESIGHT.Menu.Hint', icon: 'fas fa-eye', type: ReviewWindow, restricted: true});
 });
 Hooks.once('ready', () => runtime.start());

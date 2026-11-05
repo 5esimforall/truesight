@@ -2,7 +2,7 @@
   "id": "truesight",
   "title": "真实视觉 · Truesight",
   "description": "共享规则身份、来源解析、审核成员关系与名称证据。 Shared rule identity, sources, reviewed membership and name evidence.",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "compatibility": {
     "minimum": "13",
     "verified": "13",
@@ -46,5 +46,6 @@
       "name": "中文（简体）",
       "path": "lang/cn.json"
     }
-  ]
+  ],
+  "socket": true
 }

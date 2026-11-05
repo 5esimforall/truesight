@@ -93,14 +93,15 @@ test('public results are detached metadata; no document, search wrapper or funct
   assert.notEqual(f.service.getMember(uuid).key,'corrupted');assert.equal(f.service.read().groups.size,3);
 });
 
-test('denied members and their names/evidence disappear from reads and saved reviews', async () => {
+test('denied members disappear from reads but world review preserves absent relationships', async () => {
   const f = fixture(); await f.apply();
   const hidden=f.rows[0]; hidden.item.name='SECRET TITLE'; f.rows=f.rows.slice(1);
   const result=f.service.read();
   const text=JSON.stringify({entries:[...result.entries],groups:[...result.groups]});
   assert.ok(!text.includes(hidden.item.uuid));assert.ok(!text.includes('SECRET TITLE'));
   await f.apply();
-  assert.ok(!JSON.stringify(f.saved).includes(hidden.item.uuid));
+  assert.ok(JSON.stringify(f.saved).includes(hidden.item.uuid));
+  assert.ok(f.saved.active.groups[f.saved.active.records[hidden.item.uuid].key].members.includes(hidden.item.uuid));
 });
 
 test('identity exclusion is shared and undoable, not a browser preference', async () => {
@@ -122,12 +123,12 @@ test('corrupt or incompatible persisted review is an explicit failure, not no-re
 function runtimeFixture() {
   const handlers=new Map(),settings=new Map([['quick-insert.gmOnly',false]]),rows=groupingFixture().rows;
   const hooks={on:(name,cb)=>{handlers.set(name,cb);return cb;},off:name=>handlers.delete(name),callAll:(name,...args)=>handlers.get(name)?.(...args)};
-  const game={ready:true,world:{id:'world'},user:{id:'player',isGM:false},system:{id:'dnd5e'},i18n:{lang:'en',localize:key=>key},
+  const game={ready:true,world:{id:'world'},user:{id:'gm',isGM:true,can:()=>true},system:{id:'dnd5e'},i18n:{lang:'en',localize:key=>key},
     modules:new Map([['quick-insert',{active:true}]]),packs:new Map([['fixture.spells',{visible:true}]]),items:new Map(),actors:new Map(),
     settings:{register:(id,key,def)=>{if(!settings.has(id+'.'+key))settings.set(id+'.'+key,def.default);},get:(id,key)=>settings.get(id+'.'+key),set:async(id,key,value)=>settings.set(id+'.'+key,value)}};
   const config={Item:{compendiumIndexFields:[]},Actor:{compendiumIndexFields:[]}};
   const qi={hasIndex:false,search:()=>rows,forceIndex:async()=>{qi.hasIndex=true;hooks.callAll('QuickInsert:IndexCompleted');}};
-  const service=createRuntime({game,hooks,config,quickInsert:()=>qi,parser:()=>null});
+  const service=createRuntime({game,hooks,config,quickInsert:()=>qi,parser:()=>null, publisher:{status:()=>({canPublish:true}),start(){},begin(){},end(){},destroy(){}}});
   return {service,game,config,qi,hooks,settings,rows};
 }
 
@@ -142,7 +143,7 @@ test('runtime permissions never rely solely on old QI search results', async () 
   const f=runtimeFixture();f.qi.hasIndex=true;
   await f.service.apply(f.service.preview().id);f.game.packs.get('fixture.spells').visible=false;
   assert.equal(f.service.read().entries.size,0);
-  f.settings.set('quick-insert.gmOnly',true);assert.equal(f.service.getStatus().status,'unavailable');
+  f.game.user.isGM=false;f.settings.set('quick-insert.gmOnly',true);assert.equal(f.service.getStatus().status,'unavailable');
   assert.throws(()=>f.service.read(),{code:'quick-insert-gm-only'});
   f.game.user.isGM=true;assert.equal(f.service.getStatus().status,'ready');
   assert.equal(permitted({uuid:'Item.secret'},f.game),false);

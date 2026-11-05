@@ -40,3 +40,12 @@ test('review model distinguishes unchanged, added, adjusted and dissolved groups
  assert.equal(reviewRows(view)[0].change,'current');
  const unchanged=reviewRows(view,{groups:[{key:'different',members:[{uuid:'b'},{uuid:'a'}]}],independent:[]});assert.equal(unchanged[0].change,'unchanged');
 });
+
+test('direct construction cannot render the review workbench for players', async t => {
+ const previous=globalThis.foundry,oldGame=globalThis.game;
+ t.after(()=>{globalThis.foundry=previous;globalThis.game=oldGame;});
+ globalThis.foundry={applications:{api:{ApplicationV2:class{}}}};
+ globalThis.game={i18n:{localize:k=>k}};
+ const service=fixture();service.canManage=()=>false;connectCatalog(service);
+ const Window=reviewWindowClass();await assert.rejects(new Window()._renderHTML(),/Forbidden/);
+});

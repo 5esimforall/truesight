@@ -1,4 +1,5 @@
-import {CatalogService} from './catalog/service.mjs';
+import {createPublisher} from './catalog/publisher.mjs';
+import {CatalogService, CatalogError} from './catalog/service.mjs';
 import {reviewSettingKey} from './catalog/state.mjs';
 import {GROUP_INDEX_FIELDS} from './catalog/identity.mjs';
 import {classifyChange} from './changes.mjs';
@@ -24,12 +25,20 @@ export function permitted(item, game) {
   return uuid.startsWith('@');
 }
 
-export function createRuntime({game, hooks, config, quickInsert = () => globalThis.QuickInsert, parser = () => globalThis.Parser}) {
-  const key = reviewSettingKey(game.world, game.user?.id ?? game.userId);
+export function createRuntime({game, hooks, config, quickInsert = () => globalThis.QuickInsert, parser = () => globalThis.Parser, publisher: injectedPublisher}) {
+  const legacyKey = reviewSettingKey(game.world, game.user?.id ?? game.userId), key = 'review';
+  let service, publisherStatus;
+  const publisher = injectedPublisher ?? createPublisher({game, hooks, changed: () => {
+    const status = JSON.stringify(publisher.status());
+    if (!service || status === publisherStatus) return;
+    publisherStatus = status; service.previews.clear(); service.invalidate('publication', ['publication']);
+  }});
   const providers = new Map();
   let indexing = false, failure = null;
   const subscriptions = [];
-  game.settings.register(MODULE_ID, key, {scope: 'client', config: false, type: Object, default: null});
+  game.settings.register(MODULE_ID, legacyKey, {scope: 'client', config: false, type: Object, default: null});
+  game.settings.register(MODULE_ID, key, {scope: 'world', config: false, type: Object, default: null,
+    onChange: value => service?.receive(value, value?.operation ?? 'review')});
   for (const [type, fields] of [['Item', ITEM_FIELDS], ['Actor', ['system.source']]]) {
     for (const field of fields) if (!config[type].compendiumIndexFields.includes(field)) config[type].compendiumIndexFields.push(field);
   }
@@ -43,7 +52,10 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
     if (typeof qi.search !== 'function') return {status: 'failed', reason: 'unsupported-quick-insert'};
     return {status: 'ready'};
   };
-  const service = new CatalogService({
+  service = new CatalogService({
+    canManage: () => game.user?.isGM === true,
+    publication: () => publisher.status(),
+    legacy: () => game.settings.get(MODULE_ID, legacyKey),
     indexStatus,
     index: ({fresh = false} = {}) => {
       const status = indexStatus();
@@ -64,7 +76,21 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
       publications: game.system.id === 'dnd5e' ? undefined : [], publicationProviders: providers,
       externalPublications: {titles: parser()?.SOURCE_JSON_TO_FULL, abbreviations: parser()?.SOURCE_JSON_TO_ABV, dates: parser()?.SOURCE_JSON_TO_DATE}}),
     load: () => game.settings.get(MODULE_ID, key),
-    save: state => game.settings.set(MODULE_ID, key, state),
+    save: async (state, {revision, reason}) => {
+      publisher.begin();
+      try {
+        const current = game.settings.get(MODULE_ID, key);
+        if ((current?.revision ?? 0) !== revision) {
+          service.receive(current);
+          throw new CatalogError('preview-stale');
+        }
+        const status = publisher.status();
+        if (!status.canPublish) throw new CatalogError(status.publishReason);
+        const next = {...state, publisherId: game.user.id, publishedAt: Date.now(), operation: reason};
+        await game.settings.set(MODULE_ID, key, next);
+        return next;
+      } finally { publisher.end(); }
+    },
     notify: status => hooks.callAll(CHANGED, status)
   });
   service.registerPublications = (id, records) => {
@@ -95,6 +121,7 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
     on(event, (document, delta) => invalidate(event, classifyChange(event, document, delta, {userId: game.user?.id})));
   }
   service.start = async () => {
+    publisher.start();
     if (service.getStatus().status !== 'not-ready') { service.invalidate('ready'); return; }
     // A hidden/disabled Slow Insert panel is not responsible for starting QI.
     // Yield past other ready callbacks before requesting its public index API.
@@ -108,6 +135,6 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
       // QI may return while another build runs. Its completion hook owns ready.
     } catch (error) { indexing = false; failure = String(error); service.invalidate('index-failed'); }
   };
-  service.destroy = () => { service.dispose(); indexed = visible = null; for (const [name, id] of subscriptions) hooks.off(name, id); };
+  service.destroy = () => { publisher.destroy(); service.dispose(); indexed = visible = null; for (const [name, id] of subscriptions) hooks.off(name, id); };
   return service;
 }

@@ -25,3 +25,27 @@ export function readReview(value) {
       || !Array.isArray(value.previous.excluded) || value.previous.excluded.some(id => typeof id !== 'string'))) throw new Error('Invalid undo state');
   return structuredClone(value);
 }
+
+/** Recalculate only complete observed relationships. An absent member is not
+ * evidence of deletion. Preserve a partly observed old group as a whole. */
+export function mergeReviewSnapshot(previous, calculated) {
+  if (!previous) return structuredClone(calculated);
+  const next = structuredClone(calculated), retained = new Set();
+  for (const group of Object.values(previous.groups)) {
+    if (group.members.some(id => !Object.hasOwn(calculated.records, id))) for (const id of group.members) retained.add(id);
+  }
+  for (const id of Object.keys(previous.records)) if (!Object.hasOwn(calculated.records, id)) retained.add(id);
+  for (const [key, group] of Object.entries(next.groups)) {
+    group.members = group.members.filter(id => !retained.has(id));
+    if (group.members.length < 2) delete next.groups[key];
+  }
+  for (const record of Object.values(next.records)) if (record.key && !next.groups[record.key]) record.key = null;
+  // A retained group can share its semantic key with a newly computed group.
+  // Preserve the old decision; do not silently attach newly discovered members.
+  for (const [key, group] of Object.entries(previous.groups)) if (group.members.some(id => retained.has(id))) {
+    for (const id of next.groups[key]?.members ?? []) next.records[id].key = null;
+    next.groups[key] = structuredClone(group);
+  }
+  for (const id of retained) next.records[id] = structuredClone(previous.records[id]);
+  return next;
+}

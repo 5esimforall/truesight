@@ -1,6 +1,6 @@
 import {describeGroupingIndex, buildDescribedGroupingCatalog, calculateDescribedGrouping, canonicalUuid, groupingDiff, GROUP_RULE_VERSION} from './identity.mjs';
 import {identifySource, prepareSourceEnvironment} from './source-resolution.mjs';
-import {emptyReview, readReview} from './state.mjs';
+import {emptyReview, readReview, mergeReviewSnapshot} from './state.mjs';
 import {ALL_CHANGES, affects} from '../changes.mjs';
 
 export class CatalogError extends Error {
@@ -11,11 +11,11 @@ const stable = snapshot => JSON.stringify({
   groups: Object.entries(snapshot.groups).sort(([a], [b]) => a.localeCompare(b))
 });
 
-/** Shared client review. Dependencies are injected so the algorithm can be
+/** World review with permission-filtered client projections. Dependencies are injected so the algorithm can be
  * tested without Foundry, Quick Insert, a search panel or any name resolver. */
 export class CatalogService {
-  constructor({index, indexStatus = () => ({status: 'ready'}), environment, load, save, notify = () => {}}) {
-    Object.assign(this, {index, indexStatus, environment, save, notify});
+  constructor({index, indexStatus = () => ({status: 'ready'}), environment, load, save, notify = () => {}, canManage = () => true, publication = () => ({canPublish: true}), legacy = () => null}) {
+    Object.assign(this, {index, indexStatus, environment, load, save, notify, canManage, publication, legacy});
     this.generation = 0;
     this.revisions = {index: 0, sources: 0, names: 0, access: 0, review: 0};
     this.previews = new Map();
@@ -28,14 +28,37 @@ export class CatalogService {
   getStatus() {
     if (this.disposed) return {apiVersion: 1, status: 'unavailable', reason: 'stopped'};
     const meta = {apiVersion: 1, ruleVersion: GROUP_RULE_VERSION, revision: this.state.revision,
-      generation: this.generation, revisions: {...this.revisions}, scope: 'client-world-user', reviewed: Boolean(this.state.active),
-      canUndo: Boolean(this.state.previous), includeRisk: this.state.active?.includeRisk === true};
+      generation: this.generation, revisions: {...this.revisions}, scope: 'world', reviewed: Boolean(this.state.active),
+      canManage: this.canManage(), ...(this.canManage() ? {...this.publication(), canUndo: Boolean(this.state.previous), includeRisk: this.state.active?.includeRisk === true, legacyAvailable: this.state.revision === 0 && this.legacy() != null} : {})};
     if (this.failure) return {...meta, status: 'failed', reason: this.failure.code, message: this.failure.message};
     try {
       const index = this.indexStatus();
       if (index.status !== 'ready') return {...meta, status: index.status, reason: index.reason};
       return {...meta, status: this.state.active ? 'ready' : 'unreviewed'};
     } catch (error) { return {...meta, status: 'failed', reason: 'index-error', message: String(error)}; }
+  }
+
+  assertManager() {
+    if (!this.canManage()) throw new CatalogError('review-forbidden');
+  }
+
+  assertPublisher() {
+    this.assertManager();
+    const status = this.publication();
+    if (!status.canPublish) throw new CatalogError(status.publishReason ?? 'review-forbidden');
+  }
+
+  receive(value, reason = 'review') {
+    let next;
+    try { next = readReview(value); }
+    catch (error) {this.failure = new CatalogError('invalid-review', error.message); this.invalidate('review', ['review']); return;}
+    if (next.revision < this.state.revision) return;
+    if (JSON.stringify(next) === JSON.stringify(this.state) && !this.failure) return;
+    if (next.revision === this.state.revision && next.revision > 0) {
+      this.failure = new CatalogError('review-conflict'); this.invalidate('review', ['review']); return;
+    }
+    this.state = next; this.failure = null;
+    this.invalidate(reason, ['review']);
   }
 
   assertReadable() {
@@ -70,7 +93,7 @@ export class CatalogService {
     const domains = new Set(changes);
     // Names corroborate identity in risk previews, including candidates which
     // have not yet joined any applied group. Ordinary renames keep previews.
-    if (domains.has('names') && (this.state.active?.includeRisk || [...this.previews.values()].some(p => p.options.includeRisk))) domains.add('identity');
+    if (domains.has('names') && (this.state.active && Object.values(this.state.active.groups).some(g => g.risk) || [...this.previews.values()].some(p => p.options.includeRisk || p.legacy?.active?.includeRisk))) domains.add('identity');
     if (domains.has('sources')) domains.add('identity');
     if (['identity', 'access', 'review'].some(key => domains.has(key))) domains.add('names');
     this.generation++;
@@ -158,77 +181,74 @@ export class CatalogService {
     // absence is not an index/API failure and never implies an approved link.
     for (const uuid of wanted ?? []) if (!entries.has(uuid)) entries.set(uuid,
       {uuid, key: null, status: 'not-indexed', warning: null, reason: 'outside-index'});
-    return structuredClone({...status, changed: data.changed, excludedCount: this.state.excluded.filter(id => data.entries.has(id)).length, entries, groups});
+    return structuredClone({...status, changed: data.changed, ...(this.canManage() ? {excludedCount: this.state.excluded.filter(id => data.entries.has(id)).length} : {}), entries, groups});
   }
 
   getMember(uuid) { return this.read([uuid]).entries.get(canonicalUuid(uuid)); }
 
   makeSnapshot({includeRisk = false} = {}, {fresh = false} = {}) {
     const {described} = this.current({fresh});
-    return calculateDescribedGrouping(described, {excluded: this.state.excluded}, {includeRisk});
+    return mergeReviewSnapshot(this.state.active, calculateDescribedGrouping(described, {excluded: this.state.excluded}, {includeRisk}));
   }
 
   preview(options = {}) {
-    const snapshot = this.makeSnapshot(options);
+    this.assertManager();
+    const importing = options.importLegacy === true;
+    if (importing && this.state.revision !== 0) throw new CatalogError('legacy-already-initialized');
+    const legacy = importing ? readReview(this.legacy()) : null;
+    if (importing && !legacy?.active) throw new CatalogError('legacy-unavailable');
+    const snapshot = importing ? legacy.active : this.makeSnapshot(options);
     const id = String(++this.serial);
     // Only a bounded set of open previews lives in memory.
     if (this.previews.size >= 8) this.previews.delete(this.previews.keys().next().value);
-    this.previews.set(id, {snapshot, options: structuredClone(options), revision: this.state.revision});
+    this.previews.set(id, {snapshot, options: structuredClone(options), revision: this.state.revision, legacy, evidence: importing ? stable(this.makeSnapshot({includeRisk: legacy.active.includeRisk})) : null});
     const names = new Map(this.current().results.map(({item}) => [canonicalUuid(item), item.name]));
-    return {id, ...this.getStatus(), diff: groupingDiff(this.state.active, snapshot),
+    return {id, ...this.getStatus(), importLegacy: importing, legacyExcluded: legacy?.excluded.length ?? 0, retained: Object.keys(snapshot.records).filter(uuid => !names.has(uuid)).length, diff: groupingDiff(this.state.active, snapshot),
       groups: Object.entries(snapshot.groups).map(([key, group]) => ({key, ...group, members: group.members.map(uuid => ({uuid, name: names.get(uuid)}))})),
       independent: Object.entries(snapshot.records).filter(([, record]) => !record.key)
         .map(([uuid, record]) => ({uuid, name: names.get(uuid), reason: record.warning ?? 'no-match'}))};
   }
 
   async commit(active, excluded, previous = {active: this.state.active, excluded: this.state.excluded}, reason = 'review') {
+    this.assertPublisher();
     if (this.saving) throw new CatalogError('save-in-progress');
     this.saving = true;
     try {
-      const permitted = new Set(this.current().results.map(({item}) => canonicalUuid(item)));
-      const prune = snapshot => {
-        if (!snapshot) return null;
-        const result = structuredClone(snapshot);
-        result.records = Object.fromEntries(Object.entries(result.records).filter(([id]) => permitted.has(id)));
-        for (const [key, group] of Object.entries(result.groups)) {
-          group.members = group.members.filter(id => permitted.has(id));
-          if (group.members.length < 2) delete result.groups[key];
-        }
-        for (const record of Object.values(result.records)) if (record.key && !result.groups[record.key]) record.key = null;
-        return result;
-      };
-      const next = readReview({schemaVersion: 1, revision: this.state.revision + 1, active: prune(active),
-        excluded: excluded.filter(id => permitted.has(id)),
-        previous: previous && {active: prune(previous.active), excluded: previous.excluded.filter(id => permitted.has(id))}});
-      await this.save(structuredClone(next));
-      this.state = next;
-      this.previews.clear();
-      this.invalidate(reason, ['review']);
+      const revision = this.state.revision;
+      const next = readReview({schemaVersion: 1, revision: revision + 1, active,
+        excluded: [...new Set(excluded)], previous});
+      const saved = await this.save(structuredClone(next), {revision, reason});
+      // Runtime onChange may already have installed the committed value.
+      // Never restore a stale asynchronous completion over a later revision.
+      if (this.state.revision <= next.revision) this.receive(saved ?? next, reason);
       return this.getStatus();
     } finally { this.saving = false; }
   }
 
   async apply(id) {
+    this.assertPublisher();
     this.assertReadable();
     const preview = this.previews.get(id);
-    if (!preview || preview.revision !== this.state.revision || stable(this.makeSnapshot(preview.options, {fresh: true})) !== stable(preview.snapshot)) {
+    if (!preview || preview.revision !== this.state.revision || (preview.legacy ? (JSON.stringify(readReview(this.legacy())) !== JSON.stringify(preview.legacy) || stable(this.makeSnapshot({includeRisk: preview.legacy.active.includeRisk}, {fresh: true})) !== preview.evidence) : stable(this.makeSnapshot(preview.options, {fresh: true})) !== stable(preview.snapshot))) {
       throw new CatalogError('preview-stale', 'The index or review changed; preview again');
     }
-    return this.commit(preview.snapshot, this.state.excluded, undefined, 'apply');
+    return this.commit(preview.snapshot, preview.legacy?.excluded ?? this.state.excluded, undefined, 'apply');
   }
 
   async undo() {
+    this.assertPublisher();
     this.assertReadable();
     if (!this.state.previous) return this.getStatus();
     return this.commit(this.state.previous.active, this.state.previous.excluded, null, 'undo');
   }
 
   async exclude(uuid) {
+    this.assertPublisher();
     uuid = canonicalUuid(uuid);
     const current = this.read([uuid]).entries.get(uuid);
     if (!current?.key) throw new CatalogError('not-a-member');
     return this.commit(this.state.active, [...new Set([...this.state.excluded, uuid])], undefined, 'exclude');
   }
 
-  async restoreExcluded() { this.assertReadable(); return this.commit(this.state.active, [], undefined, 'restore'); }
+  async restoreExcluded() { this.assertPublisher(); this.assertReadable(); return this.commit(this.state.active, [], undefined, 'restore'); }
 }

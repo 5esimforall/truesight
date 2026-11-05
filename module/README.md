@@ -4,13 +4,17 @@ Truesight 对 Foundry 条目进行聚类，并利用已确认的成员关系汇�
 
 ## 使用
 
-依赖 Quick Insert 3.7.8 或以上，不依赖 Slow Insert、中文汉化包、CPR 或 GPS。将发行包中的 `truesight` 目录安装到 `Data/modules`，启用后重新载入客户端。
+依赖 Quick Insert 3.7.8 或以上，不依赖 Slow Insert、中文汉化包、CPR 或 GPS。将发行包中的 `truesight` 目录安装到 `Data/modules`，启用后重启 Foundry 服务并重新载入客户端，使模块通信声明生效。
 
-在「配置设置 → 真实视觉 · Truesight → 审核规则分组」打开管理窗口。默认查看已应用的归组；点击「重新计算」生成完整索引的候选，再在固定底栏点击「应用变化」。风险后缀归并默认关闭；预览、关闭窗口和普通索引刷新都不会发布成员关系。停用 Slow Insert 后，管理入口及中文适配仍可工作。
+GM 在「配置设置 → 真实视觉 · Truesight → 审核规则分组」打开管理窗口。默认查看已应用的归组；点击「重新计算」生成完整索引的候选，再在固定底栏点击「应用变化」。风险后缀归并默认关闭；预览、关闭窗口和普通索引刷新都不会发布成员关系。停用 Slow Insert 后，管理入口及中文适配仍可工作。
 
-审核按**当前世界、当前用户、当前浏览器客户端**保存。它不是 GM 发布的世界级审核，不会同步到其他浏览器。所有消费者在同一客户端使用同一份审核修订。每次写入保留一层撤销；撤销恢复成员关系与身份排除，不改变 Slow Insert 的首选或浏览偏好。
+审核保存在当前世界的原生世界设置中，所有客户端共享同一修订；GM 不在线时仍可读取。GM 可以打开管理窗口，玩家只使用权限范围内的分组与名称结果，不提供审核入口、管理操作和撤销记录。首选、收藏、隐藏和筛选仍是个人偏好。每次写入保留一层撤销；撤销产生新修订。
 
-新增条目先独立；已删除或不可访问的成员不返回；身份字段变化的成员失效。仅改显示译名不会单独使普通分组失效。算法沿用 Slow Insert 0.6.7 的判定：同规则代际、有效 identifier、环阶和学派一致形成候选；可选风险规则允许来源印证的完整英文书目后缀。2014 与 2024 分开。算法不读取名称解析结果来证明身份。
+发布由 Foundry 选定的在线主 GM 负责，并要求其具有世界设置写权限；其他 GM 可以查看和预览。同一主 GM 打开多个客户端时暂停发布，关闭多余客户端后继续。异常断线导致客户端记录残留时，关闭多余客户端并重新载入剩余客户端。保存期间拒绝第二次修改；预览基于旧修订或证据变化时需重新计算。
+
+首次建立世界审核可以直接重新计算，也可以在「更多操作 → 预览导入本浏览器旧审核」查看候选后点击「应用变化」。不自动导入，不合并不同浏览器的数据；世界审核建立后不再提供该入口。
+
+新增条目先独立；已删除或不可访问的成员不返回；当前索引缺项不删除世界审核，缺少成员的旧组保留原审核决定，直到能够完整复核；身份字段变化的成员失效。仅改显示译名不会单独使普通分组失效。算法沿用 Slow Insert 0.6.7 的判定：同规则代际、有效 identifier、环阶和学派一致形成候选；可选风险规则允许来源印证的完整英文书目后缀。2014 与 2024 分开。算法不读取名称解析结果来证明身份。
 
 ## API v1
 
@@ -28,15 +32,17 @@ const member = catalog.getMember('Compendium.package.pack.Item.id');
 
 ### 目录与状态
 
-- `getStatus()`：轻量状态查询，不执行 QI 搜索；返回 `apiVersion`、`ruleVersion`、`revision`、`generation`、`revisions`、`scope`、`reviewed`、`canUndo`、`includeRisk`。
+- `getStatus()`：轻量状态查询，不执行 QI 搜索；返回 `apiVersion`、`ruleVersion`、`revision`、`generation`、`revisions`、`scope: "world"`、`reviewed`、`canManage`。GM 另有 `canPublish`、`publishReason`、`publisherId`、`canUndo`、`includeRisk`、`legacyAvailable`。
 - `status` 区分 `not-ready`、`ready`、`unreviewed`、`unavailable`、`failed`。未审核成功返回独立条目；读取失败抛出带 `code`/`source` 的错误，不伪装成空组。
 - `whenReady({timeout})`：等 Quick Insert 索引完成，默认 60 秒；超时、被 GM-only 限制、接口不支持或审核损坏均明确拒绝。
-- `read(uuids?)`：返回同一审核修订下的 `entries: Map`、`groups: Map`、`changed` 和可见排除数量。成员包含类型、代际、状态、理由与来源证据，不含搜索包装、UI 对象或文档方法。指定 UUID 时，组成员仍是该组当前可访问的全部成员；未索引的查询条目标为 `not-indexed`，不会自行推断其归属。
+- `read(uuids?)`：返回同一审核修订下的 `entries: Map`、`groups: Map`、`changed` ；GM 另有可见排除数量。成员包含类型、代际、状态、理由与来源证据，不含搜索包装、UI 对象或文档方法。指定 UUID 时，组成员仍是该组当前可访问的全部成员；未索引的查询条目标为 `not-indexed`，不会自行推断其归属。
 - `getMember(uuid)`：读取一个成员。成员状态包括 `member`、`independent`、`pending`、`invalidated`、`conflict`、`not-indexed`，细分原因在 `warning`/`reason`。
 
 ### 审核与扩展
 
-- `preview({includeRisk})`：生成本客户端预览，返回预览 `id`、差异、成员和独立条目。
+审核窗口、预览与所有管理操作只向 GM 开放；写入还需通过发布客户端及原生世界设置权限检查。底层世界设置不提供额外加密或严格保密。
+
+- `preview({includeRisk, importLegacy})`：生成本客户端预览，返回预览 `id`、差异、成员、独立条目和保留的缺项数量。`importLegacy: true` 仅用于首次明确选择本浏览器旧审核。
 - `apply(id)`：确认预览；证据或审核已改变时拒绝应用。
 - `undo()`、`exclude(uuid)`、`restoreExcluded()`：操作审核关系与身份排除。个人隐藏和首选应由消费者另存。
 - `openReview()`：打开独立管理入口。
@@ -44,7 +50,7 @@ const member = catalog.getMember('Compendium.package.pack.Item.id');
 - 声明式书目使用 `flags.truesight.publications`。
 - `sourceEnvironment()`：当前来源解析上下文，供搜索展示等消费者使用。
 
-监听 `Hooks.on('truesightChanged', change => ...)` 刷新受影响的派生结果。`change.changes` 列出 `identity`、`names`、`access`、`sources`、`review`、`display` 领域；`catalog.affects(change, domains)` 和 `names.affects(change, domains)` 判断是否相关，兼容旧版无领域信息的通知。身份、权限、来源和审核变化同时影响名称。普通生命值、资源消耗及窗口偏好不发通知；普通名称和图片更新保留审核预览，启用风险规则的当前审核或预览将名称更新保守视为身份变化。相关变化立即作废服务实例内的预览；普通通知合并到下一轮事件循环，权限变化立即通知。通知只带状态、修订及领域，不广播成员 UUID、名称或来源。每次读取重新按权限检查并验证已应用快照，普通刷新不自动扩大已确认组。
+监听 `Hooks.on('truesightChanged', change => ...)` 刷新受影响的派生结果。`change.changes` 列出 `identity`、`names`、`access`、`sources`、`review`、`display` 领域；`publication` 仅通知管理界面的发布资格变化；`catalog.affects(change, domains)` 和 `names.affects(change, domains)` 判断是否相关，兼容旧版无领域信息的通知。身份、权限、来源和审核变化同时影响名称。普通生命值、资源消耗及窗口偏好不发通知；普通名称和图片更新保留审核预览，启用风险规则的当前审核或预览将名称更新保守视为身份变化。相关变化立即作废服务实例内的预览；普通通知合并到下一轮事件循环，权限变化立即通知。通知只带状态、修订及领域，不广播成员 UUID、名称或来源。每次读取重新按权限检查并验证已应用快照，普通刷新不自动扩大已确认组。
 
 ## 名称能力与失败
 
