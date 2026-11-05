@@ -1,29 +1,10 @@
-.truesight-review {
-  /* Match Slow Insert while remaining independent of its stylesheet. */
-  color-scheme: var(--color-scheme, light);
-  --ts-bg: var(--qiBackground, light-dark(#dddddde3, #302831e3));
-  --ts-border: var(--qiBorderColor, #493a50);
-  --ts-line: color-mix(in srgb, var(--ts-text) 18%, transparent);
-  --ts-text: var(--color-text-primary, light-dark(#302831, #efe6d8));
-  --ts-muted: light-dark(#666666, #b6aebc);
-  --ts-accent: light-dark(var(--qiFilterAccent, #454159), #c6b5d7);
-  --ts-field: light-dark(#ffffff50, #00000022);
-  --ts-hover: var(--qiItemHoverColor, light-dark(#99944e29, #9979b924));
-  --ts-selected: var(--qiItemSelectedColor, light-dark(#99944e29, #b3a0c624));
-  --ts-selected-hover: var(--qiItemSelectedHoverColor, light-dark(#99944e3d, #9979b924));
-  --ts-focus: var(--qiBorderColorFocused, #624670);
-  --ts-warning: light-dark(#8b5b25, #e1b879);
-  --ts-danger: light-dark(#9a4352, #e39aa7);
-  --ts-preferred: light-dark(#88631f, #e3c278);
-  --ts-primary-text: light-dark(#ffffff, #302831);
-  color:var(--ts-text); background:var(--ts-bg);
-}
+.truesight-review { color:var(--ts-text); background:var(--ts-bg); }
 .truesight-review .window-header { background:var(--ts-field); color:var(--ts-text); }
-.truesight-review .window-content { padding:14px; overflow:hidden; color:var(--ts-text); background:var(--ts-bg); }
+.truesight-review .window-content { padding:14px; overflow:hidden; color:var(--ts-text); background:transparent; }
 .truesight-review .ts-review { display:flex; flex-direction:column; gap:8px; height:100%; min-height:0; font:13px/1.4 var(--font-body, sans-serif); }
-.truesight-review .ts-review :is(button,input,select) { color:var(--ts-text); background:var(--ts-field); border:1px solid var(--ts-line); border-radius:5px; font:inherit; }
+.truesight-review :where(.ts-review) :is(button,input,select) { color:var(--ts-text); background:var(--ts-field); border:1px solid var(--ts-line); border-radius:5px; font:inherit; }
 .truesight-review .ts-review button { width:auto; height:auto; min-height:30px; flex:0 0 auto; line-height:1.4; padding:5px 10px; cursor:pointer; box-shadow:none; }
-.truesight-review .ts-review button:hover:not(:disabled) { background:var(--ts-hover); border-color:var(--ts-accent); }
+.truesight-review :where(.ts-review) button:hover:not(:disabled) { background:var(--ts-hover); border-color:var(--ts-accent); }
 .truesight-review .ts-review button[aria-pressed=true] { background:var(--ts-selected); border-color:var(--ts-accent); }
 .truesight-review .ts-review button[aria-pressed=true]:hover:not(:disabled) { background:var(--ts-selected-hover); }
 .truesight-review .ts-review button:focus-visible, .truesight-review input:focus-visible, .truesight-review select:focus-visible, .truesight-review summary:focus-visible { outline:2px solid var(--ts-focus); outline-offset:2px; }
@@ -37,7 +18,7 @@
 .truesight-review .ts-toolbar { justify-content:flex-end; flex:none; }
 .truesight-review .ts-options { position:relative; }
 .truesight-review .ts-options summary { cursor:pointer; padding:6px; border:0; box-shadow:none; white-space:nowrap; font:inherit; }
-.truesight-review .ts-options .ts-menu { position:absolute; right:0; top:calc(100% + 5px); z-index:10; width:240px; padding:10px; background:light-dark(#eeeeee,#302831); border:1px solid var(--ts-line); border-radius:6px; box-shadow:0 5px 20px #0004; }
+.truesight-review .ts-options .ts-menu { position:absolute; right:0; top:calc(100% + 5px); z-index:10; width:240px; padding:10px; background:var(--ts-menu-bg); border:1px solid var(--ts-line); border-radius:6px; box-shadow:0 5px 20px #0004; }
 .truesight-review .ts-options label { display:flex; align-items:center; gap:6px; max-width:260px; font-size:12px; }
 .truesight-review .ts-options button { display:block; width:100%; margin-top:4px; }
 .truesight-review .ts-message { font-size:12px; color:var(--ts-muted); }
@@ -61,14 +42,13 @@
 .truesight-review .ts-risk { padding:10px; border-left:3px solid var(--ts-warning); background:color-mix(in srgb, var(--ts-warning) 9%, transparent); font-size:12px; }
 .truesight-review .ts-footer { flex:none; justify-content:space-between; border-top:1px solid var(--ts-line); padding-top:10px; font-size:12px; }
 .truesight-review .ts-primary { background:var(--ts-accent); color:var(--ts-primary-text); border-color:var(--ts-accent); }
-.truesight-review .ts-primary:hover:not(:disabled) { background:color-mix(in srgb, var(--ts-accent) 85%, var(--ts-primary-text)); color:var(--ts-primary-text); }
+.truesight-review .ts-primary:hover:not(:disabled) { background:color-mix(in srgb, var(--ts-accent) 85%, var(--ts-primary-text)); }
 @media(max-width:600px) { .truesight-review .ts-body { grid-template-columns:minmax(120px,.7fr) minmax(160px,1fr); } .truesight-review .ts-detail { padding:10px; } }
 
 .truesight-review .window-header :is(.window-title,.header-control) { color:var(--ts-text); text-shadow:none; }
 .truesight-review .window-header .header-control:hover { background:var(--ts-hover); }
 .truesight-review .window-resize-handle { color:var(--ts-muted); }
 .truesight-review input[type=checkbox] { accent-color:var(--ts-accent); }
-.truesight-review select option { color:var(--ts-text); background:light-dark(#eeeeee,#302831); }
 .truesight-review code { color:var(--ts-text); background:var(--ts-field); }
 
 /* Bound our flex items explicitly: native buttons have fixed input height. */

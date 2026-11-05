@@ -6,7 +6,7 @@ const t = (key, data = {}) => game.i18n.localize(`TRUESIGHT.${key}`).replace(/\{
 const node = (tag, text, cls) => {const el=document.createElement(tag);if(text)el.textContent=text;if(cls)el.className=cls;return el;};
 export function reviewWindowClass() {
  return class ReviewWindow extends foundry.applications.api.ApplicationV2 {
-  static DEFAULT_OPTIONS={classes:['truesight-review'],window:{title:'TRUESIGHT.Menu.Name',resizable:true,minimizable:true},position:{width:880,height:680}};
+  static DEFAULT_OPTIONS={classes:['truesight-review','truesight-theme'],window:{title:'TRUESIGHT.Menu.Name',resizable:true,minimizable:true},position:{width:880,height:680}};
   constructor(options={}) {super({...options,window:{...options.window,title:t('Menu.Name')}});}
   async _renderHTML() {
    if (!catalog.getStatus().canManage) throw new Error(t('UI.Forbidden'));

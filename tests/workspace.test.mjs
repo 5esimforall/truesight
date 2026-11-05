@@ -36,7 +36,7 @@ test('release ZIP uses the Foundry module ID rather than the development directo
   const listing = execFileSync('unzip', ['-Z1', archive], {encoding: 'utf8'}).trim().split('\n');
   assert.ok(listing.every(path => path.startsWith('truesight/')));
   assert.deepEqual(JSON.parse(execFileSync('unzip', ['-p', archive, 'truesight/module.json'], {encoding: 'utf8'})), manifest);
-  for (const path of ['api-v1.mjs', 'scripts/main.mjs', 'styles.css', 'lang/en.json', 'lang/cn.json']) {
+  for (const path of ['api-v1.mjs', 'scripts/main.mjs', 'theme.css', 'styles.css', 'lang/en.json', 'lang/cn.json']) {
     assert.ok(listing.includes('truesight/' + path));
   }
   assert.ok(!listing.some(path => path.includes('/tests/') || path.endsWith('.DS_Store')));

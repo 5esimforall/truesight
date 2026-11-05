@@ -1,0 +1,27 @@
+/* Public opt-in theme: resolve every color against the nearest Foundry host.
+   Keep Quick Insert's hues, not its globally inherited light/dark variables. */
+.truesight-theme {
+  color-scheme: var(--color-scheme, light);
+  --ts-bg: light-dark(#dddddde3, #302831e3);
+  --ts-border: #493a50;
+  --ts-line: color-mix(in srgb, var(--ts-text) 18%, transparent);
+  --ts-text: var(--color-text-primary, light-dark(#302831, #efe6d8));
+  --ts-muted: light-dark(#666666, #b6aebc);
+  --ts-accent: light-dark(#454159, #c6b5d7);
+  --ts-field: light-dark(#ffffff50, #00000022);
+  --ts-menu-bg: light-dark(#dddddd, #302831);
+  --ts-hover: light-dark(#99944e29, #9979b924);
+  --ts-selected: light-dark(#99944e29, #b3a0c624);
+  --ts-selected-hover: light-dark(#99944e3d, #9979b924);
+  --ts-focus: #624670;
+  --ts-warning: light-dark(#8b5b25, #e1b879);
+  --ts-danger: light-dark(#9a4352, #e39aa7);
+  --ts-preferred: light-dark(#88631f, #e3c278);
+  --ts-primary-text: light-dark(#ffffff, #302831);
+}
+
+/* Native popups need opaque backgrounds even when the window is translucent. */
+.truesight-theme select :is(option, optgroup) {
+  color: var(--ts-text);
+  background-color: var(--ts-menu-bg);
+}
