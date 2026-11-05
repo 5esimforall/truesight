@@ -13,7 +13,10 @@ export async function readCorpus({packs, loadTitleIndex, loadGrouping, localItem
     throw Object.assign(new Error('Grouping unavailable', {cause}), {source: 'truesight'});
   }
   const indexes = new Map();
-  const visible = [...packs.entries()].filter(([, pack]) => pack.visible && pack.documentName === 'Item');
+  // Foundry Collection iterates values by default, unlike Map. Keep one
+  // explicit entry snapshot for both index reads and translation sources.
+  const entries = [...packs.entries()];
+  const visible = entries.filter(([, pack]) => pack.visible && pack.documentName === 'Item');
   const requested = [...new Set([...GROUP_FIELDS, 'flags.babele.originalName', ...fields])];
   // Bound concurrency and read each visible pack only once in this snapshot.
   for (let i = 0; i < visible.length; i += 8) {
@@ -28,7 +31,7 @@ export async function readCorpus({packs, loadTitleIndex, loadGrouping, localItem
     }));
   }
   // Translation ID recovery must use this snapshot, never a stale pack.index.
-  const sources = new Map([...packs].map(([id, pack]) => [id, {
+  const sources = new Map(entries.map(([id, pack]) => [id, {
     visible: pack.visible, documentName: pack.documentName, index: indexes.get(id)
   }]));
   return {indexes, sources, titleIndex: await loadTitleIndex(), catalogFor, localItems: [...localItems]};

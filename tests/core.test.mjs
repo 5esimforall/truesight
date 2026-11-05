@@ -1,3 +1,4 @@
+import {FoundryCollection} from './helpers/foundry-collection.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {core} from '../module/scripts/names/api.mjs';
@@ -57,4 +58,36 @@ test('public API exposes separate catalog, names and source namespaces without a
   assert.equal(api.catalog.apiVersion, 1);
   assert.ok(Object.isFrozen(api));
   assert.ok(Object.isFrozen(core));
+});
+
+
+test('corpus snapshots use Foundry collection entries without interpreting pack contents as key/value pairs', async () => {
+  const row = {_id: 'deflect', name: 'Deflect Missiles', type: 'feat'};
+  const index = new FoundryCollection([[row._id, row]]);
+  // Compendiums are also iterable collections. Empty contents reproduce the
+  // reported undefined pack, even though getIndex successfully returned rows.
+  const visible = Object.assign(new FoundryCollection(), {
+    visible: true, documentName: 'Item', getIndex: async () => index
+  });
+  const hidden = {visible: false, documentName: 'Item', getIndex: () => {throw Error('hidden pack read');}};
+  const actors = {visible: true, documentName: 'Actor', getIndex: () => {throw Error('actor pack read');}};
+  const packs = new FoundryCollection([['visible', visible], ['hidden', hidden], ['actors', actors]]);
+  const catalogFor = () => new Map();
+  const corpus = await core.readCorpus({packs, loadGrouping: () => catalogFor, loadTitleIndex: () => null});
+  assert.deepEqual([...corpus.indexes.keys()], ['visible']);
+  assert.equal(corpus.indexes.get('visible'), index);
+  assert.deepEqual([...corpus.sources.keys()], ['visible', 'hidden', 'actors']);
+  assert.deepEqual(corpus.sources.get('visible'), {visible: true, documentName: 'Item', index});
+  assert.deepEqual(corpus.sources.get('hidden'), {visible: false, documentName: 'Item', index: undefined});
+  assert.equal(corpus.sources.get('actors').documentName, 'Actor');
+  assert.equal(corpus.catalogFor, catalogFor);
+  assert.equal(corpus.titleIndex, null);
+});
+
+test('Foundry collection index failures still identify the source and reject the snapshot', async () => {
+  const packs = new FoundryCollection([['broken.pack', {
+    visible: true, documentName: 'Item', getIndex: async () => {throw Error('index failed');}
+  }]]);
+  await assert.rejects(core.readCorpus({packs, loadGrouping: () => () => new Map(), loadTitleIndex: () => null}),
+    error => error.source === 'broken.pack' && error.cause.message === 'index failed');
 });
