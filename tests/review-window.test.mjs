@@ -49,3 +49,21 @@ test('direct construction cannot render the review workbench for players', async
  const service=fixture();service.canManage=()=>false;connectCatalog(service);
  const Window=reviewWindowClass();await assert.rejects(new Window()._renderHTML(),/Forbidden/);
 });
+
+test('same-name UI retains clues, requires reasons, previews without publishing and supports decision revocation',async t=>{
+ const keys=['game','document','foundry','Hooks'],before=Object.fromEntries(keys.map(k=>[k,globalThis[k]]));t.after(()=>Object.assign(globalThis,before));
+ globalThis.game={i18n:{localize:k=>k}};globalThis.document={createElement:t=>new Element(t)};
+ globalThis.foundry={applications:{api:{ApplicationV2:class{}}}};globalThis.Hooks={on:()=>1,off:()=>{}};
+ const service=fixture();connectCatalog(service);const root=await new (reviewWindowClass())()._renderHTML();
+ const find=key=>descendants(root).find(n=>n.tag==='button'&&n.textContent.startsWith('TRUESIGHT.'+key));
+ await find('UI.Filter.names').onclick();
+ assert.ok(descendants(root).some(n=>n.className==='ts-name-pair'));
+ const textarea=descendants(root).find(n=>n.tag==='textarea');assert.equal(find('Names.Same').disabled,true);
+ textarea.value='Compared the source rules';textarea.oninput();assert.equal(find('Names.Same').disabled,false);
+ await find('Names.Same').onclick();assert.equal(service.state.active,null);assert.ok(descendants(root).some(n=>n.className==='ts-risk ts-decision-preview'));
+ await find('UI.Discard').onclick();assert.equal(service.state.active,null);assert.ok(descendants(root).some(n=>n.className==='ts-name-pair'));
+ const text2=descendants(root).find(n=>n.tag==='textarea');text2.value='Different rules in the source';text2.oninput();await find('Names.Different').onclick();
+ await find('UI.Apply').onclick();assert.equal(service.state.active.decisions.length,1);assert.equal(service.state.active.decisions[0].kind,'different');
+ await find('Names.Decisions').onclick();assert.ok(find('Names.Revoke'));
+ await find('Names.Revoke').onclick();assert.equal(service.state.active.decisions.length,1);await find('UI.Apply').onclick();assert.equal(service.state.active.decisions.length,0);
+});

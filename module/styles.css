@@ -103,3 +103,13 @@
 .truesight-review .ts-toolbar > .ts-tabs { margin-right:auto; flex:0 0 auto; flex-wrap:nowrap; }
 
 .truesight-review .ts-message:empty { display:none; }
+
+.truesight-review .ts-name-hint { color:var(--ts-muted); font-size:12px; }
+.truesight-review .ts-name-fields { display:grid; grid-template-columns:minmax(70px,.4fr) minmax(0,1fr); gap:3px 8px; margin:8px 0; font-size:12px; }
+.truesight-review .ts-name-fields :is(dt,dd) { margin:0; overflow-wrap:anywhere; }
+.truesight-review .ts-name-fields dt { color:var(--ts-muted); }
+.truesight-review .ts-name-pair { border:1px solid var(--ts-line); padding:9px; border-radius:5px; display:flex; flex-direction:column; gap:8px; }
+.truesight-review .ts-name-clues { margin:0; padding-left:18px; font-size:12px; overflow-wrap:anywhere; }
+.truesight-review .ts-review textarea { width:100%; min-height:58px; resize:vertical; color:var(--ts-text); background:var(--ts-field); border:1px solid var(--ts-line); border-radius:5px; font:inherit; }
+.truesight-review .ts-review textarea:focus-visible { outline:2px solid var(--ts-focus); outline-offset:2px; }
+.truesight-review .ts-decision-preview { display:flex; flex-direction:column; gap:6px; }

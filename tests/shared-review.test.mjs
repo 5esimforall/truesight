@@ -143,3 +143,21 @@ test('native designated GM is the only writer; duplicate same-account sessions f
   b.socket.connected=false;b.socketHooks.callAll('disconnect');assert.equal(b.publisher.status().publishReason,'publisher-not-ready');
   a.publisher.destroy();b.publisher.destroy();
 });
+
+test('explicit same-name review shares only applied relations, survives client reload and honors player access',async()=>{
+ const w=world(),gm=w.create('gm',true),player=w.create('p',false),other=w.create('gm2',true,false);
+ for(const client of [gm,player,other])client.f.rows[1].item.system.school='evo';
+ const left=gm.f.rows[0].item.uuid,right=gm.f.rows[1].item.uuid;
+ const preview=gm.runtime.previewNameDecision({left,right,kind:'same',reason:'Reviewed matching rule text despite the school metadata conflict'});
+ assert.equal(player.runtime.getMember(left).key,null);
+ assert.throws(()=>player.runtime.readNameReview(),{code:'review-forbidden'});assert.throws(()=>player.runtime.readNameDecisions(),{code:'review-forbidden'});
+ const otherPreview=other.runtime.previewNameDecision({left,right,kind:'same',reason:'Same comparison'});
+ await assert.rejects(other.runtime.apply(otherPreview.id),{code:'publisher-other-gm'});
+ await gm.runtime.apply(preview.id);
+ const key=player.runtime.getMember(left).key;assert.ok(key);assert.equal(player.runtime.getMember(right).key,key);
+ const reload=w.create('reload',false);reload.f.rows[1].item.system.school='evo';assert.equal(reload.runtime.getMember(left).key,key);
+ reload.game.packs.get('fixture.spells').visible=false;assert.equal(reload.runtime.getMember(left).status,'not-indexed');assert.equal(reload.runtime.read().groups.size,0);
+ assert.ok(player.notices.every(change=>!JSON.stringify(change).includes('Compendium.')));
+ await gm.runtime.undo();assert.equal(player.runtime.getMember(left).key,null);
+ for(const client of [gm,player,other,reload])client.runtime.destroy();
+});

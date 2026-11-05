@@ -6,6 +6,19 @@ const reviewReasons=new Set(['edition','source','rules','identifier','spell','id
 export function validSnapshot(value) {
   if (!value || value.version !== 1 || value.ruleVersion !== GROUP_RULE_VERSION
     || !value.records || typeof value.records !== 'object' || Array.isArray(value.records) || !value.groups || typeof value.groups !== 'object' || Array.isArray(value.groups)) return null;
+  if(!Array.isArray(value.decisions)||value.decisions.length>10000)return null;
+  const decisionKeys=new Set();
+  for(const d of value.decisions) {
+    if(!d||!['same','different'].includes(d.kind)||typeof d.key!=='string'||!d.key.startsWith('reviewed-name:')||d.key.length>100||decisionKeys.has(d.key)
+      ||typeof d.reason!=='string'||!d.reason.trim()||d.reason.length>1000
+      ||!Array.isArray(d.members)||d.members.length<2||d.members.length>500||new Set(d.members).size!==d.members.length
+      ||!d.evidence||typeof d.evidence!=='object'||Array.isArray(d.evidence)
+      ||Object.keys(d.evidence).length!==d.members.length||d.members.some(id=>typeof id!=='string'||!Object.hasOwn(value.records,id)
+        ||typeof d.evidence[id]!=='string'||d.evidence[id].length>12000))return null;
+    if(d.kind==='same'?d.sides!==null:!Array.isArray(d.sides)||d.sides.length!==2||d.sides.some(side=>!Array.isArray(side)||!side.length)
+      ||d.sides.flat().length!==d.members.length||new Set(d.sides.flat()).size!==d.members.length||d.sides.flat().some(id=>!d.members.includes(id)))return null;
+    decisionKeys.add(d.key);
+  }
   const records=Object.entries(value.records),groups=Object.entries(value.groups);
   if(records.length>100000||groups.length>50000)return null;
   for(const [uuid,r] of records)if(!r||uuid.length>500||typeof r.fingerprint!=='string'||r.fingerprint.length>2000
@@ -15,7 +28,11 @@ export function validSnapshot(value) {
     if(!g||key.length>500||typeof g.kind!=='string'||!g.kind||g.kind.length>100||g.kind.trim()!==g.kind||![null,'implementation'].includes(g.risk)
       || !Array.isArray(g.members)||g.members.length<2||new Set(g.members).size!==g.members.length
       || g.members.some(id=>!Object.hasOwn(value.records,id)||value.records[id].key!==key))return null;
-    if(g.kind==='spell') {
+    if(g.reason==='reviewed-name') {
+      const decision=value.decisions.find(d=>d.key===key&&d.kind==='same');
+      if(!decision||g.risk!==null||g.members.length!==decision.members.length||g.members.some(id=>!decision.members.includes(id))
+        ||![null,'2014','2024'].includes(g.rules))return null;
+    } else if(g.kind==='spell') {
       if(!['2014','2024'].includes(g.rules)||!Number.isInteger(g.level)||typeof g.school!=='string'
         ||!['identifier','source-suffix'].includes(g.reason))return null;
     } else if(!['item-identity','origin'].includes(g.reason)||g.risk!==null
@@ -44,6 +61,7 @@ export function readReview(value) {
 export function mergeReviewSnapshot(previous, calculated) {
   if (!previous) return structuredClone(calculated);
   const next = structuredClone(calculated), retained = new Set();
+  next.decisions=structuredClone(previous.decisions);
   for (const group of Object.values(previous.groups)) {
     if (group.members.some(id => !Object.hasOwn(calculated.records, id))) for (const id of group.members) retained.add(id);
   }

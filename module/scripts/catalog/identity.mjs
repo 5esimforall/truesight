@@ -1,9 +1,11 @@
 import { identifySource, prepareSourceEnvironment } from "./source-resolution.mjs";
 import {IDENTITY_FIELDS, DOCUMENT_TYPES, validIdentifier, prepareOwners, itemContext} from "./item-identity.mjs";
 
+import {nameEvidence, decisionCurrent} from './name-review.mjs';
+
 // Metadata only: never load documents, descriptions, activities or effects.
 export const GROUP_INDEX_FIELDS = Object.freeze(["originalName", "flags.babele.originalName", "flags.chris-premades.info.identifier", "flags.gambits-premades.gpsUuid", ...IDENTITY_FIELDS]);
-export const GROUP_RULE_VERSION = 2;
+export const GROUP_RULE_VERSION = 3;
 const text = value => typeof value === "string" ? value.trim() : "";
 const english = value => /^[A-Za-z][A-Za-z0-9\s'’:,()&.!+/-]*$/.test(text(value));
 const nameKey = value => text(value).normalize("NFKC").toLowerCase().replace(/’/g,"'").replace(/\s+/g," ");
@@ -77,7 +79,7 @@ function describe(result, environment) {
   const nameFingerprint=JSON.stringify([base,suffixBook]);
   const automated=Boolean(indexed.flags?.["chris-premades"]?.info?.identifier || indexed.flags?.["gambits-premades"]?.gpsUuid);
   return {result,uuid,spell,id,rules:source.rules,level:system.level,school:system.school,warning,fingerprint,nameFingerprint,
-    type,system,documentType:item.documentType,sourceConflict:["edition-conflict","source-conflict"].includes(source.status),
+    type,system,nameEvidence:nameEvidence(item,indexed,name,id),documentType:item.documentType,sourceConflict:["edition-conflict","source-conflict"].includes(source.status),
     origin:text(indexed._stats?.compendiumSource ?? item._stats?.compendiumSource),
     base,suffixBook,names:[item.name,name].filter(Boolean),tags:automated?["automation"]:[],srd:isSrdSource(item,environment),key:null,risk:null,kind:null};
 }
@@ -192,7 +194,7 @@ export function calculateDescribedGrouping(described,preferences=normalizeGroupi
   }
   for(const e of entries.values())records[e.uuid]={fingerprint:e.fingerprint,nameFingerprint:e.risk?e.nameFingerprint:null,key:e.key,
     warning:excluded.has(e.uuid)?"excluded":e.warning,reason:e.key?null:excluded.has(e.uuid)?"excluded":e.warning??e.reason??"no-match"};
-  return {version:1,ruleVersion:GROUP_RULE_VERSION,createdAt:Date.now(),includeRisk,records,groups};
+  return {version:1,ruleVersion:GROUP_RULE_VERSION,createdAt:Date.now(),includeRisk,records,groups,decisions:[]};
 }
 
 /** Applied membership only. New/changed/unauthorized records never acquire a
@@ -202,15 +204,16 @@ export function buildGroupingCatalog(results,environment={},snapshot=null,prefer
 }
 export function buildDescribedGroupingCatalog(described,snapshot=null,preferences=normalizeGrouping()) {
   const entries=copyEntries(described),groups=new Map(),excluded=new Set(preferences.excluded??[]);
+  const confirmed=new Set((snapshot?.decisions??[]).filter(d=>d.kind==='same'&&decisionCurrent(d,described)).map(d=>d.key));
   let changed=0;
   for(const entry of entries.values()) {
     const previous=snapshot?.records?.[entry.uuid];
-    const current=previous&&previous.fingerprint===entry.fingerprint&&(!previous.nameFingerprint||previous.nameFingerprint===entry.nameFingerprint);
+    const group=previous?.key&&snapshot?.groups?.[previous.key],manual=group?.reason==='reviewed-name';
+    const current=previous&&previous.fingerprint===entry.fingerprint&&(!previous.nameFingerprint||previous.nameFingerprint===entry.nameFingerprint)&&(!manual||confirmed.has(previous.key));
     if(!current||snapshot?.ruleVersion!==GROUP_RULE_VERSION||(previous?.warning==="excluded")!==excluded.has(entry.uuid))changed++;
     if(previous&&!current)entry.warning=entry.warning||"identity";
     if(excluded.has(entry.uuid))entry.warning="excluded";
-    const group=previous?.key&&snapshot?.groups?.[previous.key];
-    if(snapshot?.ruleVersion===GROUP_RULE_VERSION&&current&&!entry.warning&&!excluded.has(entry.uuid)&&group?.members.includes(entry.uuid)) {
+    if(snapshot?.ruleVersion===GROUP_RULE_VERSION&&current&&(!entry.warning||manual)&&!excluded.has(entry.uuid)&&group?.members.includes(entry.uuid)) {
       entry.key=previous.key;entry.risk=group.risk;entry.kind=group.kind;addTo(groups,entry.key,entry);
     } else if(current&&previous?.warning&&previous.warning!=="excluded"&&!entry.warning)entry.warning=previous.warning;
     entry.reason=entry.key?null:entry.warning??(current?previous.reason:'awaiting-review');
