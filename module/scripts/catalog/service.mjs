@@ -1,6 +1,7 @@
 import {buildGroupingCatalog, calculateGrouping, canonicalUuid, groupingDiff, GROUP_RULE_VERSION} from './identity.mjs';
 import {identifySource, prepareSourceEnvironment} from './source-resolution.mjs';
 import {emptyReview, readReview} from './state.mjs';
+import {ALL_CHANGES, affects} from '../changes.mjs';
 
 export class CatalogError extends Error {
   constructor(code, message = code) { super(message); this.name = 'CatalogError'; this.code = code; this.source = 'truesight'; }
@@ -61,12 +62,35 @@ export class CatalogService {
     });
   }
 
-  invalidate(reason = 'index') {
+  invalidate(reason = 'index', changes = ALL_CHANGES, {defer = false} = {}) {
+    if (!changes.length) return;
+    const domains = new Set(changes);
+    // Names corroborate identity in risk previews, including candidates which
+    // have not yet joined any applied group. Ordinary renames keep previews.
+    if (domains.has('names') && (this.state.active?.includeRisk || [...this.previews.values()].some(p => p.options.includeRisk))) domains.add('identity');
+    if (domains.has('sources')) domains.add('identity');
+    if (['identity', 'access', 'review'].some(key => domains.has(key))) domains.add('names');
     this.generation++;
+    if (affects({changes: [...domains]}, ['identity', 'access', 'review'])) this.previews.clear();
+    const pending = this.pendingChange ?? {changes: new Set()};
+    for (const domain of domains) pending.changes.add(domain);
+    pending.reason = reason;
+    this.pendingChange = pending;
+    clearTimeout(this.changeTimer);
+    if (defer) this.changeTimer = setTimeout(() => this.publishChange(), 0);
+    else this.publishChange();
+  }
+
+  publishChange() {
+    const pending = this.pendingChange;
+    if (!pending) return;
+    this.pendingChange = null;
     for (const check of this.waiters) check();
     // Events contain no UUIDs, names, source evidence or cached members.
-    this.notify({...this.getStatus(), reason});
+    this.notify({...this.getStatus(), reason: pending.reason, changes: [...pending.changes]});
   }
+
+  dispose() { clearTimeout(this.changeTimer); this.pendingChange = null; }
 
   current() {
     const status = this.assertReadable();
@@ -150,7 +174,7 @@ export class CatalogService {
       await this.save(structuredClone(next));
       this.state = next;
       this.previews.clear();
-      this.invalidate(reason);
+      this.invalidate(reason, ['review']);
       return this.getStatus();
     } finally { this.saving = false; }
   }

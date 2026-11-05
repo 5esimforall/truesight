@@ -27,7 +27,7 @@ test('review opens current state without calculating, previews explicitly, and a
  await find('UI.Recalculate').onclick();assert.equal(calculations,1);assert.equal(service.getStatus().reviewed,false);assert.equal(find('UI.Apply').hidden,false);
  await find('UI.Discard').onclick();assert.equal(service.getStatus().reviewed,false);assert.equal(find('UI.Apply').hidden,true);
  await find('UI.Recalculate').onclick();await find('UI.Apply').onclick();assert.equal(service.getStatus().reviewed,true);assert.equal(find('UI.Apply').hidden,true);
- await find('UI.Recalculate').onclick();hook();assert.equal(find('UI.Apply').hidden,true);
+ await find('UI.Recalculate').onclick();hook({changes:['names']});assert.equal(find('UI.Apply').hidden,false);hook({changes:['display']});assert.equal(find('UI.Apply').hidden,false);hook({changes:['identity']});assert.equal(find('UI.Apply').hidden,true);
  assert.ok(descendants(root).find(n=>n.className==='ts-error').textContent.includes('Stale'));
 });
 test('review model distinguishes unchanged, added, adjusted and dissolved groups and isolates independent entries',()=>{

@@ -80,7 +80,7 @@ export function reviewWindowClass() {
    search.oninput=()=>{page=0;selected=null;render();};risk.onchange=()=>{if(preview){resetPreview();render();error.textContent=t('UI.Stale');}};
    rail.append(list,pagination);body.append(rail,detail);actions.append(discard,apply);footer.append(summary,actions);root.append(toolbar,message,search,filters,reason,error,body,footer);
    if(this.reviewHook)Hooks.off('truesightChanged',this.reviewHook);
-   this.reviewHook=Hooks.on('truesightChanged',()=>{const stale=Boolean(preview);resetPreview();load();if(stale&&!busy)error.textContent=t('UI.Stale');});
+   this.reviewHook=Hooks.on('truesightChanged',change=>{const invalid=catalog.affects(change,['identity','access','review','sources']);const stale=invalid&&Boolean(preview);if(invalid)resetPreview();load();if(stale&&!busy)error.textContent=t('UI.Stale');});
    for(const menu of [options,more])menu.ontoggle=()=>{if(menu.open)for(const other of [options,more])if(other!==menu)other.open=false;};
    root.addEventListener?.('click',event=>{if(!event.target.closest('.ts-options')){options.open=false;more.open=false;}});
    root.addEventListener?.('keydown',event=>{if(event.key==='Escape'&&(options.open||more.open)){const menu=options.open?options:more;menu.open=false;menu.querySelector('summary').focus();event.stopPropagation();}});

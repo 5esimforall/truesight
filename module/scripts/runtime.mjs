@@ -1,6 +1,7 @@
 import {CatalogService} from './catalog/service.mjs';
 import {reviewSettingKey} from './catalog/state.mjs';
 import {GROUP_INDEX_FIELDS} from './catalog/identity.mjs';
+import {classifyChange} from './changes.mjs';
 
 export const MODULE_ID = 'truesight';
 export const CHANGED = 'truesightChanged';
@@ -26,7 +27,7 @@ export function permitted(item, game) {
 export function createRuntime({game, hooks, config, quickInsert = () => globalThis.QuickInsert, parser = () => globalThis.Parser}) {
   const key = reviewSettingKey(game.world, game.user?.id ?? game.userId);
   const providers = new Map();
-  let indexing = false, failure = null, timer;
+  let indexing = false, failure = null;
   const subscriptions = [];
   game.settings.register(MODULE_ID, key, {scope: 'client', config: false, type: Object, default: null});
   for (const [type, fields] of [['Item', ITEM_FIELDS], ['Actor', ['system.source']]]) {
@@ -53,22 +54,21 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
   service.registerPublications = (id, records) => {
     if (typeof id !== 'string' || !id.trim() || !Array.isArray(records)) throw new TypeError('Expected a publication provider id and records');
     const registered = structuredClone(records);
-    providers.set(id, registered); service.invalidate('sources');
+    providers.set(id, registered); service.invalidate('sources', ['sources']);
     return () => providers.get(id) === registered && service.unregisterPublications(id);
   };
   service.unregisterPublications = id => {
     const removed = providers.delete(id);
-    if (removed) service.invalidate('sources');
+    if (removed) service.invalidate('sources', ['sources']);
     return removed;
   };
   const on = (name, callback) => subscriptions.push([name, hooks.on(name, callback)]);
-  const invalidate = reason => {
-    clearTimeout(timer);
-    timer = setTimeout(() => service.invalidate(reason), 0);
-  };
+  const invalidate = (reason, changes) => service.invalidate(reason, changes, {defer: !changes?.includes('access')});
   on('QuickInsert:IndexCompleted', () => { indexing = false; failure = null; invalidate('index'); });
   for (const event of ['createItem', 'updateItem', 'deleteItem', 'createActor', 'updateActor', 'deleteActor',
-    'updateCompendium', 'deleteCompendium', 'updateUser', 'updateSetting']) on(event, () => invalidate(event));
+    'createCompendium', 'updateCompendium', 'deleteCompendium', 'createFolder', 'updateFolder', 'deleteFolder', 'updateUser', 'updateSetting']) {
+    on(event, (document, delta) => invalidate(event, classifyChange(event, document, delta, {userId: game.user?.id})));
+  }
   service.start = async () => {
     if (service.getStatus().status !== 'not-ready') { service.invalidate('ready'); return; }
     // A hidden/disabled Slow Insert panel is not responsible for starting QI.
@@ -82,6 +82,6 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
       // QI may return while another build runs. Its completion hook owns ready.
     } catch (error) { indexing = false; failure = String(error); service.invalidate('index-failed'); }
   };
-  service.destroy = () => { clearTimeout(timer); for (const [name, id] of subscriptions) hooks.off(name, id); };
+  service.destroy = () => { service.dispose(); for (const [name, id] of subscriptions) hooks.off(name, id); };
   return service;
 }

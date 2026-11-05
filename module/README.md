@@ -44,13 +44,13 @@ const member = catalog.getMember('Compendium.package.pack.Item.id');
 - 声明式书目使用 `flags.truesight.publications`。
 - `sourceEnvironment()`：当前来源解析上下文，供搜索展示等消费者使用。
 
-监听 `Hooks.on('truesightChanged', status => ...)` 重建派生结果。应用、撤销、身份排除、索引和来源更新触发通知。通知只带状态与修订，不广播成员 UUID、名称或来源。每次读取重新按权限检查并验证已应用快照，普通刷新不自动扩大已确认组。
+监听 `Hooks.on('truesightChanged', change => ...)` 刷新受影响的派生结果。`change.changes` 列出 `identity`、`names`、`access`、`sources`、`review`、`display` 领域；`catalog.affects(change, domains)` 和 `names.affects(change, domains)` 判断是否相关，兼容旧版无领域信息的通知。身份、权限、来源和审核变化同时影响名称。普通生命值、资源消耗及窗口偏好不发通知；普通名称和图片更新保留审核预览，启用风险规则的当前审核或预览将名称更新保守视为身份变化。相关变化立即作废服务实例内的预览；普通通知合并到下一轮事件循环，权限变化立即通知。通知只带状态、修订及领域，不广播成员 UUID、名称或来源。每次读取重新按权限检查并验证已应用快照，普通刷新不自动扩大已确认组。
 
 ## 名称能力与失败
 
 `names.apiVersion` 为 1。名称层读取可见索引、独立名称证据和 `catalog` 的有效成员关系，按消费者自己的候选目录消歧。没有中文汉化包时不读取其资产，仍可使用索引中的原名和双语名；汉化包已启用但读取失败则报告失败，不发布不完整结果。
 
-CPR/GPS 适配监听目录变更重建计划；重建前先撤下旧派生结果。CPR 只撤回由本适配注册且尚未被其他代码改写的键；GPS 重建期间保留原生查找。基座不依赖或调用提供方的自动化入口。
+CPR/GPS/MISC 适配监听相关证据变更重建计划；重建前先撤下旧派生结果。CPR 只撤回由本适配注册且尚未被其他代码改写的键；GPS 重建期间保留原生查找。基座不依赖或调用提供方的自动化入口。
 
 ## v0.1.1
 

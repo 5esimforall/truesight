@@ -166,3 +166,41 @@ test('name evidence works without a Chinese translation module and never fetches
   const corpus=await core.loadCorpus();assert.equal(corpus.indexes.size,0);assert.equal(corpus.titleIndex,null);
   assert.deepEqual(core.collectNamePairs(new Map(),corpus.titleIndex,new Set(),['provider.actions']),[]);
 });
+
+test('ordinary updates preserve previews; identity and access invalidate synchronously before deferred publication', async () => {
+  const f=runtimeFixture();f.qi.hasIndex=true;
+  let notices=0;f.hooks.on('truesightChanged',()=>notices++);
+  const preview=f.service.preview();
+  f.hooks.callAll('updateActor',{}, {'system.attributes.hp.value':1});
+  f.hooks.callAll('updateSetting',{key:'slow-insert.grouping'},{value:{}});
+  await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(notices,0);assert.ok(f.service.previews.has(preview.id));
+  f.rows[0].item.name='Changed display';
+  f.hooks.callAll('updateItem',{}, {name:'Changed display'});
+  await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(notices,1);assert.ok(f.service.previews.has(preview.id));
+  await f.service.apply(preview.id);
+  const next=f.service.preview();
+  f.hooks.callAll('updateItem',{}, {'system.school':'evo'});
+  await assert.rejects(f.service.apply(next.id),{code:'preview-stale'});
+  const risk=f.service.preview({includeRisk:true});
+  f.hooks.callAll('updateItem',{}, {name:'Risk rename'});
+  assert.equal(f.service.previews.has(risk.id),false);
+  f.game.packs.get('fixture.spells').visible=false;
+  f.hooks.callAll('updateCompendium',{}, {ownership:{default:0}});
+  assert.equal(f.service.read().entries.size,0);
+  f.service.destroy();
+});
+test('batched notifications retain all domains and immediate access revocation flushes pending changes', async () => {
+  const f=fixture();
+  f.service.invalidate('rename',['names'],{defer:true});
+  f.service.invalidate('image',['display'],{defer:true});
+  assert.equal(f.events.length,0);
+  await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(f.events.length,1);assert.deepEqual(f.events[0].changes.sort(),['display','names']);
+  f.service.invalidate('rename',['names'],{defer:true});
+  f.service.invalidate('permission',['access']);
+  assert.equal(f.events.length,2);
+  assert.ok(f.events[1].changes.includes('access'));
+  await new Promise(resolve=>setTimeout(resolve,5));assert.equal(f.events.length,2);
+});
