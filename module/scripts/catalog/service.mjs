@@ -20,7 +20,7 @@ export class CatalogService {
   constructor({index, indexStatus = () => ({status: 'ready'}), environment, load, save, notify = () => {}, canManage = () => true, publication = () => ({canPublish: true})}) {
     Object.assign(this, {index, indexStatus, environment, load, save, notify, canManage, publication});
     this.generation = 0;
-    this.revisions = {index: 0, sources: 0, names: 0, access: 0, review: 0};
+    this.revisions = {index: 0, sources: 0, names: 0, access: 0, review: 0, packs: 0};
     this.previews = new Map();
     this.waiters = new Set();
     this.serial = 0;
@@ -118,7 +118,7 @@ export class CatalogService {
     });
   }
 
-  invalidate(reason = 'index', changes = ALL_CHANGES, {defer = false} = {}) {
+  invalidate(reason = 'index', changes = ALL_CHANGES, {defer = false, packs = true} = {}) {
     if (this.disposed || !changes.length) return;
     const domains = new Set(changes);
     // Names corroborate identity in risk previews, including candidates which
@@ -128,6 +128,7 @@ export class CatalogService {
     if (['identity', 'access', 'review'].some(key => domains.has(key))) domains.add('names');
     this.generation++;
     for (const domain of ['sources', 'names', 'access', 'review']) if (changes.includes(domain)) this.revisions[domain]++;
+    if (packs && ['identity', 'names', 'access', 'sources'].some(domain => domains.has(domain))) this.revisions.packs++;
     const indexChanged = ['identity', 'names', 'access', 'display'].some(domain => changes.includes(domain));
     if (indexChanged) this.revisions.index++;
     this.currentCache = this.nameReviewCache = null;

@@ -13,6 +13,14 @@ function paths(value, prefix = '') {
 }
 const overlaps = (a, b) => a === b || a.startsWith(b + '.') || b.startsWith(a + '.');
 
+export function isLocalDocumentChange(event, document) {
+  if (!/^(?:create|update|delete)(?:Item|Actor|JournalEntry|JournalEntryPage|Macro|Scene|RollTable|Playlist|Cards)$/.test(event)) return false;
+  if (!document || typeof document !== 'object' || document.pack) return false;
+  if (typeof document.uuid === 'string' && document.uuid.startsWith('Compendium.')) return false;
+  if (document.parent?.pack) return false;
+  return Boolean(document.id || document._id || document.parent || typeof document.uuid === 'string');
+}
+
 /** Accept Foundry's nested, dotted and deletion updates. Missing deltas are
  * conservatively relevant; known unrelated fields never invalidate evidence. */
 export function classifyChange(event, document, delta, {userId} = {}) {
@@ -26,7 +34,12 @@ export function classifyChange(event, document, delta, {userId} = {}) {
       || /^(babele|dnd-simplified-chinese-babele-patch)\./.test(key)) return ['names'];
     return [];
   }
-  if (!event.startsWith('update')) return ['identity', 'names', 'access'];
+  if (!event.startsWith('update')) {
+    if (event === 'createCompendium' || event === 'deleteCompendium') return ['identity', 'names', 'access'];
+    if (event === 'createFolder' || event === 'deleteFolder') return ['names', 'access'];
+    if (/^(?:create|delete)(?:Item|Actor)$/.test(event)) return ['identity', 'names'];
+    return ['identity'];
+  }
   if (!delta || typeof delta !== 'object' || Array.isArray(delta)) return [...ALL_CHANGES];
   const fields = paths(delta).filter(path => path && path !== '_id');
   const has = (...keys) => fields.some(path => keys.some(key => overlaps(path, key)));

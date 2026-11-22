@@ -109,7 +109,7 @@ test('ItemChoice, arbitrary text and automation flags do not prove feature owner
   assert.equal(record(snapshot,'a').reason,'owner-context');assert.equal(record(snapshot,'b').reason,'owner-context');
 });
 
-test('all known non-Item documents use direct provenance; absent provenance and unknown protocols are distinct',()=>{
+test('all known non-Item documents use direct provenance without warning on uncopied compendium or world entries',()=>{
   for(const documentType of DOCUMENT_TYPES) {
     const source=`Compendium.fixture.docs.${documentType}.source`;
     const rows=['source','copy'].map(id=>({item:{uuid:`Compendium.fixture.docs.${documentType}.${id}`,documentType,
@@ -117,8 +117,43 @@ test('all known non-Item documents use direct provenance; absent provenance and 
     const snapshot=calculateGrouping(rows,environment);
     assert.equal(Object.keys(snapshot.groups).length,1,documentType);assert.ok(validSnapshot(snapshot),documentType);
     delete rows[1].item._stats.compendiumSource;
-    assert.deepEqual(Object.values(calculateGrouping(rows,environment).records).map(r=>r.reason),['origin','origin']);
+    const independent=calculateGrouping(rows,environment);
+    assert.equal(Object.keys(independent.groups).length,0,documentType);
+    assert.deepEqual(Object.values(independent.records).map(r=>r.warning),[null,null]);
+    assert.deepEqual(Object.values(independent.records).map(r=>r.reason),['no-match','no-match']);
+    const worldRows=['a','b'].map(id=>({item:{uuid:`${documentType}.${id}`,documentType,subType:'example',name:'Same',_stats:{}}}));
+    const world=calculateGrouping(worldRows,environment);
+    assert.equal(Object.keys(world.groups).length,0,documentType);
+    assert.deepEqual(Object.values(world.records).map(r=>r.warning),[null,null]);
+    assert.deepEqual(Object.values(world.records).map(r=>r.reason),['origin','origin']);
   }
+});
+
+test('legacy ruleVersion 3 snapshots with origin warnings clear ungrouped monster warnings without dropping provenance groups',()=>{
+  const source='Compendium.dnd5e.monsters.Actor.goblin';
+  const rows=[
+    {item:{uuid:source,documentType:'Actor',subType:'npc',name:'Goblin',system:{source:{rules:'2014'}},_stats:{}}},
+    {item:{uuid:'Compendium.custom.monsters.Actor.goblinCopy',documentType:'Actor',subType:'npc',name:'哥布林',system:{source:{rules:'2014'}},_stats:{compendiumSource:source}}},
+    {item:{uuid:'Compendium.dnd5e.monsters.Actor.dragon',documentType:'Actor',subType:'npc',name:'Red Dragon',system:{source:{rules:'2014'}},_stats:{}}},
+    {item:{uuid:'Actor.worldNpc',documentType:'Actor',subType:'npc',name:'Local Bandit',system:{source:{rules:'2014'}},_stats:{}}}
+  ];
+  const current=calculateGrouping(rows,environment);
+  const groupKey=Object.keys(current.groups)[0];
+  const legacy=structuredClone(current);
+  for(const id of ['Compendium.dnd5e.monsters.Actor.dragon','Actor.worldNpc']) {
+    legacy.records[id]={fingerprint:JSON.stringify(['identity-v2','Actor','npc',null,null,{documentType:'Actor',type:'npc',origin:null},'origin']),
+      nameFingerprint:null,key:null,warning:'origin',reason:'origin'};
+  }
+  const s=service(rows,{schemaVersion:1,revision:4,active:legacy,previous:null,excluded:[]});
+  const view=s.read();
+  assert.equal(view.groups.size,1);
+  assert.equal(view.entries.get(source).key,groupKey);
+  assert.equal(view.entries.get('Compendium.custom.monsters.Actor.goblinCopy').key,groupKey);
+  assert.equal(view.entries.get('Compendium.dnd5e.monsters.Actor.dragon').warning,null);
+  assert.equal(view.entries.get('Compendium.dnd5e.monsters.Actor.dragon').status,'pending');
+  assert.equal(view.entries.get('Actor.worldNpc').warning,null);
+  assert.equal(view.entries.get('Actor.worldNpc').reason,'origin');
+  s.dispose();
 });
 
 test('applying and reloading records every entry, leaves no supported type perpetually pending and keeps diagnostics consistent',async()=>{

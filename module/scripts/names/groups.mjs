@@ -10,9 +10,15 @@ export async function loadGrouping() {
   };
 }
 
-export const GROUP_FIELDS = ['system.identifier', 'system.source', 'system.school', 'system.level', '_stats.modifiedTime'];
+export const GROUP_FIELDS = ['system.identifier', 'system.source', 'system.school', 'system.level', 'system.type', '_stats.modifiedTime'];
 export function nameEvidence(row, source, extraEvidence = () => []) {
+  const category = row?.type === 'feat' && typeof row.system?.type?.value === 'string' && row.system.type.value.trim()
+    ? row.system.type.value.trim() : undefined;
+  const identifier = typeof row?.system?.identifier === 'string' && row.system.identifier.trim()
+    ? row.system.identifier.trim() : undefined;
+  const actorType = typeof row?.actorType === 'string' && row.actorType ? row.actorType : undefined;
   return {displayName: row.name, source, type: row.type, rules: row.system?.source?.rules,
+    ...(category ? {category} : {}), ...(identifier ? {identifier} : {}), ...(actorType ? {actorType} : {}),
     originalName: row.flags?.babele?.originalName ?? row.originalName, lookupNames: extraEvidence(row)};
 }
 

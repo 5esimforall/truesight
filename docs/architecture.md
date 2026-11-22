@@ -42,9 +42,10 @@ flowchart TD
 - `loadCorpus({fields})`：使用当前 Foundry 客户端读取快照；`readCorpus(...)` 是可注入数据源的同一加载过程，用于测试。同一客户端、权限与证据修订下合并字段需求并复用元数据；每批并发读取至多八个合集，失败时等待本批请求结束才允许下一轮。返回仅含所需字段的独立副本，不在适配器之间复用可变计划。
 - `collectNamePairs(...)`：归一译表名称对，保留来源及可确认的类型、规则代际。ID 键使用本次快照恢复原名；缺少上下文的证据保持未限定，不凭显示名猜代际。
 - `itemGroups(...)`：仅消费聚类层返回的有效审核成员关系，记录普通名称证据；适配层可传入额外证据提取函数。目录不可用或形状不符时失败，不创建替代分组。
-- `planAliases({pairs, lookupNames, existingAliases, groups, scope})`：纯计算，返回 `{aliases: Map, report}`；不修改参数、名称表或文档。
+- `planAliases({pairs, lookupNames, existingAliases, groups, scope})`：纯计算，返回 `{aliases: Map, report, disambiguation}`；不修改参数、名称表或文档。
+- `resolveItemAlias(plan, item)`：在全局名称冲突时，按已审核同源组／`_stats.compendiumSource`、条目自身的 `originalName`、`system.identifier` 与完整双语名顺序消歧；任一步骤命中明确英文原名但不受当前提供方支持时直接止步，不降级猜测。
 
-作用域由适配层指定。`scope: null` 要求所有同名键全局一致；指定 `{rules, type, types}` 时，先排除已知不属于该作用域的证据和成员。未限定证据仍参与歧义检查。共享字段 `lookupNames` 表示额外的已确认查找名，不替代系统的 `system.identifier` 或提供方自己的标识。
+作用域由适配层指定。`scope: null` 要求所有同名键全局一致；指定 `{rules, type, types, category, excludeCategories, actorType}` 时，先排除已知不属于该作用域的证据、特性类别与所属角色类型（如 NPC 内嵌特性不混入玩家角色查找）。未限定证据仍参与歧义检查。共享字段 `lookupNames` 表示额外的已确认查找名，不替代系统的 `system.identifier` 或提供方自己的标识。
 
 计划先收集独立证据，再检查共用显示名的组。一个组的推断不会成为另一个组的新证据。已命中的完整双语名、明确原名和既有映射都保留来源；未命中的双语弱推测不能制造冲突，也不能单独发布别名。
 
@@ -95,13 +96,13 @@ flowchart LR
 
 ## 状态与构建生命周期
 
-`catalog.getStatus()` 只检查就绪／可用状态，不调用 QI 搜索。`revisions` 分别记录 `index`（目录元数据）、`sources`、`names`、`access`、`review` 的失效代次；它们是客户端缓存令牌，不是世界共享审核修订。
+`catalog.getStatus()` 只检查就绪／可用状态，不调用 QI 搜索。`revisions` 分别记录 `index`（目录元数据）、`sources`、`names`、`access`、`review`、`packs` 的失效代次；它们是客户端缓存令牌，不是世界共享审核修订。
 
 目录按索引对象和元数据代次复用全量搜索结果；每次读取仍过滤当前权限，权限投影变化会换掉归一化缓存。来源修订重建来源上下文；审核修订只重建成员投影。预览与读取共享归一化元数据，但计算使用独立记录，不能改写缓存。应用预览时强制读取新索引并校验证据。
 
-名称快照按当前客户端、世界、用户、角色、语言、译表启用情况、可见合集和世界条目以及证据修订缓存；字段集合按各消费者需求合并。返回的 `isCurrent()` 可在异步发布前检查证据与权限是否仍有效。审核关系由 `catalogFor` 读取当前投影，不缓存提供方计划。Babele 的批量就绪、数据加载及重初始化事件使名称证据失效，不监听逐条翻译钩子。
+名称快照按当前客户端、世界、用户、角色、语言、译表启用情况、可见合集和世界条目以及证据修订缓存；字段集合按各消费者需求合并。本地世界或角色条目的增删改名不改变 `packs` 修订，从而复用已读取的合集索引与译表快照，仅重新读取可见本地条目。返回的 `isCurrent()` 可在异步发布前检查证据与权限是否仍有效，`isAccessCurrent()` 检查权限与可见合集是否仍有效。审核关系由 `catalogFor` 读取当前投影，不缓存提供方计划。Babele 的批量就绪、数据加载及重初始化事件使名称证据及合集快照失效，不监听逐条翻译钩子。
 
-`names.createRefreshQueue({invalidate, build})` 为每个消费者维护一个运行任务和一个最新请求。`request()` 同步撤回旧结果，下一微任务开始构建；`build(isCurrent)` 发布前检查令牌，`stop()` 作废在途结果与排队请求。旧构建失败不阻断较新的请求。调用方自行保留其提供方作用域、报告和可变计划。
+`names.createRefreshQueue({invalidate, build})` 为每个消费者维护一个运行任务和一个最新请求。`request(options)` 先回调 `invalidate(options)`（权限撤回等需要立即清场的场景传入 `{retract: true}`，普通本地条目变更保留旧计划直到新快照原子替换），下一微任务开始构建；`build(isCurrent, options)` 发布前检查令牌，`stop()` 作废在途结果与排队请求。旧构建失败不阻断较新的请求。调用方自行保留其提供方作用域、报告和可变计划。
 
 性能夹具运行 `npm run benchmark -- 20000`。扫描／归一化计数有断言，时间只描述本机合成数据，不等同于 Foundry 实机性能。
 
@@ -150,7 +151,7 @@ flowchart TD
 | 职业／种族／背景特性 | 同代际、同标识、同特性类别与子类，并核对所属对象、前置等级和其他前置标识。归属来自完整 requirements 与可见父条目的名称／标识对应、结构化前置标识或明确 ItemGrant。 |
 | 子职 | 同代际、同标识，同时保留 `classIdentifier`。子职授予关系可细化相符的职业要求，不能跨职业建立关系。 |
 | 其他 Item | 所有 14 个已知类型与系统声明的扩展类型均适用类型／代际／标识基线，并保留 `system.type` 的类别、子类、基础物品。物理物品还区分稀有度与魔法加值。 |
-| 怪物专属特性与其他文档 | 缺少所属对象时，只接受类型相符的明确 `_stats.compendiumSource` 及一致的已知约束；普通文档也允许已索引的直接来源参与同源组，不递归追链，不按名字聚类。 |
+| 怪物专属特性与其他文档 | 合集中的非 Item 文档以自身 UUID 为源身份，不因缺少 `_stats.compendiumSource` 被视为缺陷；仅当同源副本提供一致的 `_stats.compendiumSource` 与已知约束时才归为同源组，不递归追链，不按名字聚类。世界或虚拟非 Item 文档保持独立并记录 `origin` 原因，不计入缺陷警告。 |
 
 `Fighter 9` 与 `Fighter` 加 `prerequisites.level = 9` 归一为相同约束；2024 的原生特性也可通过战士 ItemGrant 恢复所属对象及授予等级。requirements 只做完整名称匹配，中文／双语父名称须来自可见条目的原名证据；歧义不按索引顺序取舍。ItemChoice 表示可选资格，不能证明其中每个条目都专属于该职业。多个归属依据冲突时保留独立，类别上下文不同的同标识条目分别形成候选。
 

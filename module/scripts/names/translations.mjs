@@ -39,8 +39,15 @@ export function readNamePairs(packId, titles, index, knownNames) {
     if (typeof translatedName !== 'string' || !han.test(translatedName)) continue;
     const englishName = originalName(key, index, knownNames);
     const rows = index?.get?.(key) ? [index.get(key)] : byOriginal.get(key) ?? [null];
-    for (const row of rows) pairs.push({translatedName, englishName, source: packId + '#' + key,
-      type: row?.type, rules: row?.system?.source?.rules});
+    for (const row of rows) {
+      const category = row?.type === 'feat' && typeof row.system?.type?.value === 'string' && row.system.type.value.trim()
+        ? row.system.type.value.trim() : undefined;
+      const identifier = typeof row?.system?.identifier === 'string' && row.system.identifier.trim()
+        ? row.system.identifier.trim() : undefined;
+      pairs.push({translatedName, englishName, source: packId + '#' + key,
+        type: row?.type, rules: row?.system?.source?.rules,
+        ...(category ? {category} : {}), ...(identifier ? {identifier} : {})});
+    }
   }
   return pairs;
 }

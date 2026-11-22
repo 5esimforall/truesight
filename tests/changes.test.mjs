@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {classifyChange, affects} from '../module/scripts/changes.mjs';
+import {classifyChange, affects, isLocalDocumentChange} from '../module/scripts/changes.mjs';
 
 const classify = (event, delta, doc = {}) => classifyChange(event, doc, delta, {userId: 'me'});
 test('unrelated actor, item, user and preference updates leave evidence alone', () => {
@@ -22,6 +22,21 @@ test('nested, flat, parent replacement and deletion evidence updates are classif
   assert.deepEqual(classify('updateSetting', {value:true}, {key:'chris-premades.thirdParty'}), ['names']);
   assert.ok(classify('updateActor', {items:[]}).includes('identity'));
   assert.ok(classify('updateItem', undefined).includes('identity'));
+  assert.deepEqual(classify('createItem', undefined, {id: 'item1'}), ['identity', 'names']);
+  assert.deepEqual(classify('deleteItem', undefined, {id: 'item1'}), ['identity', 'names']);
+  assert.deepEqual(classify('createActor', undefined, {id: 'actor1'}), ['identity', 'names']);
+  assert.deepEqual(classify('deleteActor', undefined, {id: 'actor1'}), ['identity', 'names']);
+  assert.deepEqual(classify('createCompendium', undefined, {}), ['identity', 'names', 'access']);
+  assert.deepEqual(classify('deleteCompendium', undefined, {}), ['identity', 'names', 'access']);
+});
+test('local document changes are distinguished from compendium and mock updates', () => {
+  assert.equal(isLocalDocumentChange('createItem', {id: 'local1'}), true);
+  assert.equal(isLocalDocumentChange('updateItem', {uuid: 'Actor.a1.Item.i1', parent: {id: 'a1'}}), true);
+  assert.equal(isLocalDocumentChange('updateItem', {}), false);
+  assert.equal(isLocalDocumentChange('updateItem', {id: 'x', pack: 'dnd5e.spells'}), false);
+  assert.equal(isLocalDocumentChange('updateItem', {id: 'x', uuid: 'Compendium.dnd5e.spells.Item.x'}), false);
+  assert.equal(isLocalDocumentChange('updateItem', {id: 'x', parent: {pack: 'dnd5e.monsters'}}), false);
+  assert.equal(isLocalDocumentChange('updateCompendium', {id: 'dnd5e.spells'}), false);
 });
 test('domain filters reject untagged notifications and ignore unrelated classified changes', () => {
   assert.throws(()=>affects(undefined,['names']), /domain-tagged/);

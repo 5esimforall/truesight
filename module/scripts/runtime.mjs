@@ -4,7 +4,7 @@ import {createPublisher} from './catalog/publisher.mjs';
 import {CatalogService, CatalogError} from './catalog/service.mjs';
 import {DOCUMENT_TYPES} from './catalog/item-identity.mjs';
 import {GROUP_INDEX_FIELDS} from './catalog/identity.mjs';
-import {classifyChange} from './changes.mjs';
+import {classifyChange, isLocalDocumentChange} from './changes.mjs';
 
 export const MODULE_ID = 'truesight';
 export const CHANGED = 'truesightChanged';
@@ -147,14 +147,14 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
     return removed;
   };
   const on = (name, callback) => subscriptions.push([name, hooks.on(name, callback)]);
-  const invalidate = (reason, changes) => {
+  const invalidate = (reason, changes, options = {}) => {
     const access = changes?.includes('access');
-    service.invalidate(reason, changes, {defer: !access});
+    service.invalidate(reason, changes, {...options, defer: !access});
     // Retract immediately, then refresh once after QI's remaining document
     // hooks. Otherwise a cache filled during revocation/grant dispatch could
     // retain the pre-update index indefinitely (incremental QI updates have no
     // IndexCompleted event).
-    if (access) service.invalidate(reason, changes, {defer: true});
+    if (access) service.invalidate(reason, changes, {...options, defer: true});
   };
   for (const event of ['babele.ready', 'babele.dataLoaded', 'babele.reinitialized']) on(event, () => invalidate(event, ['names', 'identity']));
   on('QuickInsert:IndexCompleted', () => { indexing = false; failure = null; void hydrate(); invalidate('index'); });
@@ -163,7 +163,7 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
     'createCompendium', 'updateCompendium', 'deleteCompendium', 'createFolder', 'updateFolder', 'deleteFolder', 'updateUser', 'updateSetting']) {
     on(event, (document, delta) => {
       const changes=classifyChange(event,document,delta,{userId:game.user?.id});
-      invalidate(event,changes);
+      invalidate(event,changes,{packs:!isLocalDocumentChange(event,document)});
       if(changes.includes('access')&&external.records.size)void hydrate();
     });
   }

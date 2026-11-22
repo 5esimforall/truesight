@@ -253,6 +253,57 @@ test('production corpus shares requested fields across consumers and rechecks ac
   f.hooks.callAll('updateItem',{}, {name:'new'});await new Promise(r=>setTimeout(r,5));await core.loadCorpus();assert.equal(reads,3);
 });
 
+test('local item creates and renames reuse pack indexes and title fetches while tracking access changes', async t => {
+  const f = runtimeFixture(); f.qi.hasIndex = true;
+  const old = globalThis.game, oldFetch = globalThis.fetch, oldFoundry = globalThis.foundry;
+  t.after(() => { globalThis.game = old; globalThis.fetch = oldFetch; globalThis.foundry = oldFoundry; f.service.destroy(); });
+  globalThis.game = f.game;
+  globalThis.foundry = {utils: {getRoute: path => '/' + path}};
+  f.game.modules.set('dnd-simplified-chinese-babele-patch', {active: true});
+  f.game.items = new Map();
+  let packReads = 0, titleFetches = 0;
+  const pack = f.game.packs.get('fixture.spells');
+  pack.documentName = 'Item';
+  pack.getIndex = async () => { packReads++; return new Map([['a', {_id: 'a', name: '迷踪步', type: 'spell', system: {source: {rules: '2014'}}}]]); };
+  globalThis.fetch = async () => { titleFetches++; return {ok: true, json: async () => ({})}; };
+  connectCatalog(f.service);
+
+  const initial = await core.loadCorpus();
+  assert.equal(packReads, 1);
+  assert.equal(titleFetches, 1);
+  assert.equal(initial.isAccessCurrent(), true);
+
+  const localItem = {id: 'local1', uuid: 'Item.local1', name: '不屈', visible: true, type: 'feat', system: {identifier: 'indomitable'}};
+  f.game.items.set('local1', localItem);
+  f.hooks.callAll('createItem', localItem, {});
+  await new Promise(r => setTimeout(r, 5));
+  assert.equal(initial.isAccessCurrent(), true);
+  assert.equal(initial.isCurrent(), false);
+  const afterCreate = await core.loadCorpus();
+  assert.equal(packReads, 1);
+  assert.equal(titleFetches, 1);
+  assert.equal(afterCreate.localItems.length, 1);
+  assert.equal(afterCreate.localItems[0].name, '不屈');
+
+  localItem.name = '新不屈';
+  f.hooks.callAll('updateItem', localItem, {name: '新不屈'});
+  await new Promise(r => setTimeout(r, 5));
+  assert.equal(afterCreate.isAccessCurrent(), true);
+  const afterRename = await core.loadCorpus();
+  assert.equal(packReads, 1);
+  assert.equal(titleFetches, 1);
+  assert.equal(afterRename.localItems[0].name, '新不屈');
+
+  pack.visible = false;
+  assert.equal(afterRename.isAccessCurrent(), false);
+  pack.visible = true;
+  f.hooks.callAll('babele.dataLoaded');
+  await new Promise(r => setTimeout(r, 5));
+  await core.loadCorpus();
+  assert.equal(packReads, 2);
+  assert.equal(titleFetches, 2);
+});
+
 test('access changes retract immediately and settle again after later QI hooks update the index', async () => {
   const f=runtimeFixture();f.qi.hasIndex=true;let rows=f.rows.slice(0,1);f.qi.search=()=>rows;
   const sizes=[];f.hooks.on('truesightChanged',()=>sizes.push(f.service.read().entries.size));

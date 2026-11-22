@@ -2,7 +2,7 @@ import {FoundryCollection} from './helpers/foundry-collection.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {core} from '../module/scripts/names/api.mjs';
-import {readNamePairs} from '../module/scripts/names/translations.mjs';
+import {BASE_ITEM_PACKS, readNamePairs} from '../module/scripts/names/translations.mjs';
 
 const pair = (englishName, rules, type = 'feat') => ({translatedName: '同名', englishName,
   source: `${type}:${rules}#${englishName}`, type, rules});
@@ -105,4 +105,128 @@ test('a failed pack batch waits for all in-flight reads before allowing a retry'
   const reading=core.readCorpus({packs,loadGrouping:()=>()=>new Map(),loadTitleIndex:()=>null});
   const checked=assert.rejects(reading,/Index unavailable/).then(()=>{settled=true;});
   await new Promise(resolve=>setTimeout(resolve,5));assert.equal(settled,false);release();await checked;
+});
+
+test('category and actorType scoping separate class features from monster/race collisions', async () => {
+  const index = new Map([
+    ['dnd5e.classes24', new Map([
+      ['rage', {_id: 'rage', name: '狂暴', type: 'feat', flags: {babele: {originalName: 'Rage'}}, system: {identifier: 'rage', source: {rules: '2024'}, type: {value: 'class'}}}],
+      ['indomitable', {_id: 'indomitable', name: '不屈', type: 'feat', flags: {babele: {originalName: 'Indomitable'}}, system: {identifier: 'indomitable', source: {rules: '2024'}, type: {value: 'class'}}}]
+    ])],
+    ['dnd5e.monsterfeatures', new Map([
+      ['berserk', {_id: 'berserk', name: '狂暴', type: 'feat', flags: {babele: {originalName: 'Berserk'}}, system: {identifier: 'berserk', source: {rules: '2014'}, type: {value: 'monster'}}}],
+      ['relentless', {_id: 'relentless', name: '不屈', type: 'feat', flags: {babele: {originalName: 'Relentless'}}, system: {identifier: 'relentless', source: {rules: '2014'}, type: {value: 'monster'}}}]
+    ])],
+    ['third.races', new Map([
+      ['unflinching', {_id: 'unflinching', name: '不屈', type: 'feat', flags: {babele: {originalName: 'Unflinching'}}, system: {identifier: 'unflinching', source: {rules: '2024'}, type: {value: 'race'}}}]
+    ])]
+  ]);
+  const packs = new FoundryCollection([...index].map(([id, rows]) => [id, {
+    visible: true, documentName: 'Item', getIndex: async () => rows
+  }]));
+  const titleIndex = {
+    ...Object.fromEntries(BASE_ITEM_PACKS.map(id => [id, {titles: {}}])),
+    'dnd5e.classes24': {titles: {Rage: '狂暴', Indomitable: '不屈'}},
+    'dnd5e.monsterfeatures': {titles: {Berserk: '狂暴', Relentless: '不屈'}},
+    'third.races': {titles: {Unflinching: '不屈'}}
+  };
+  const localItems = [
+    {uuid: 'Actor.npc1.Item.1', name: '狂暴', type: 'feat', flags: {babele: {originalName: 'Berserk'}}, system: {source: {rules: '2024'}}, actor: {type: 'npc', items: []}},
+    {uuid: 'Actor.npc1.Item.2', name: '偷袭', type: 'feat', flags: {babele: {originalName: 'Sneak Attack (1/Round)'}}, system: {source: {rules: '2024'}}, actor: {type: 'npc', items: []}},
+    {uuid: 'Compendium.dnd5e.classes24.Item.sneak', name: '偷袭', type: 'feat', flags: {babele: {originalName: 'Sneak Attack'}}, system: {source: {rules: '2024'}, type: {value: 'class'}}}
+  ];
+  const corpus = await core.readCorpus({
+    packs, localItems,
+    loadTitleIndex: () => titleIndex,
+    loadGrouping: () => items => new Map(items.map(item => [item.uuid, {key: null}]))
+  });
+  assert.equal(corpus.localItems[0].actor, undefined);
+  assert.equal(corpus.localItems[0].actorType, 'npc');
+  const lookupNames = new Set(['Rage', 'Indomitable', 'Sneak Attack']);
+  const pairs = core.collectNamePairs(corpus.sources, corpus.titleIndex, lookupNames, ['third.races']);
+  const groups = core.itemGroups(corpus.indexes, corpus.catalogFor, corpus.localItems);
+  const featScope = {rules: '2024', type: 'feat', types: ['feat'], category: 'class', excludeCategories: ['monster'], actorType: 'character'};
+  const plan = core.planAliases({pairs, lookupNames, groups, scope: featScope});
+  assert.equal(plan.aliases.get('狂暴'), 'Rage');
+  assert.equal(plan.aliases.get('不屈'), 'Indomitable');
+  assert.equal(plan.aliases.get('偷袭'), 'Sneak Attack');
+  // Monster scope sees neither character class features nor PC-only exclusions incorrectly
+  const monsterPlan = core.planAliases({
+    pairs, lookupNames: new Set(['Berserk']), groups,
+    scope: {rules: '2014', type: 'feat', types: ['feat'], category: 'monster', actorType: 'npc'}
+  });
+  assert.equal(monsterPlan.aliases.get('狂暴'), 'Berserk');
+});
+
+test('resolveItemAlias disambiguates conflicts via reviewed groups, originalName, identifier, and bilingual names while failing closed', () => {
+  const pairs = [
+    {translatedName: '狂暴', englishName: 'Rage', source: 'phb#Rage', type: 'feat', rules: '2024', identifier: 'rage'},
+    {translatedName: '狂暴', englishName: 'Berserk', source: 'mm#Berserk', type: 'feat', rules: '2024', identifier: 'berserk'},
+    {translatedName: '宿敌', englishName: 'Favored Enemy', source: 'phb#Favored Enemy', type: 'feat', rules: '2014', identifier: 'favored-enemy'},
+    {translatedName: '宿敌', englishName: 'Favored Foe', source: 'tce#Favored Foe', type: 'feat', rules: '2014', identifier: 'favored-foe'},
+    {translatedName: '拨挡', englishName: 'Deflect Missiles', source: 'phb#Deflect Missiles', type: 'feat', rules: '2014', identifier: 'deflect-attacks'}
+  ];
+  const groups = new Map([
+    ['reviewed-rage', [
+      {displayName: '狂暴', source: 'Compendium.aaatransfer.classes.Item.rage1', type: 'feat', rules: '2024', identifier: 'feat-hash'},
+      {displayName: '狂暴', source: 'Compendium.dnd5e.classes24.Item.rage2', originalName: 'Rage', type: 'feat', rules: '2024', identifier: 'rage'}
+    ]],
+    ['reviewed-deflect', [
+      {displayName: '拨挡', source: 'Compendium.dnd5e.classfeatures.Item.deflect', originalName: 'Deflect Missiles', type: 'feat', rules: '2014', identifier: 'deflect-attacks'}
+    ]],
+    ['inconsistent', [
+      {displayName: '宿敌', source: 'Compendium.bad.Item.1', originalName: 'Favored Enemy'},
+      {displayName: '宿敌', source: 'Compendium.bad.Item.2', originalName: 'Favored Foe'}
+    ]]
+  ]);
+  const lookupNames = new Set(['Rage', 'Favored Enemy', 'Deflect Missiles']);
+  const plan = core.planAliases({pairs, lookupNames, groups});
+  assert.equal(plan.aliases.has('狂暴'), false);
+  assert.equal(plan.aliases.has('宿敌'), false);
+
+  // 1. Reviewed Truesight group / compendiumSource match
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '狂暴', _stats: {compendiumSource: 'Compendium.aaatransfer.classes.Item.rage1'}, system: {identifier: 'feat-hash'}
+  }), 'Rage');
+  // Renamed item must not match via compendiumSource
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '自订名字', _stats: {compendiumSource: 'Compendium.aaatransfer.classes.Item.rage1'}
+  }), null);
+  // Inconsistent group does not disambiguate
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '宿敌', _stats: {compendiumSource: 'Compendium.bad.Item.1'}
+  }), null);
+
+  // 2. Explicit Babele originalName (supports matched, fails closed on unsupported without falling through)
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '狂暴', flags: {babele: {originalName: 'Rage'}}
+  }), 'Rage');
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '狂暴', flags: {babele: {originalName: 'Berserk'}}, system: {identifier: 'rage'}
+  }), null);
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '宿敌', flags: {babele: {originalName: 'Favored Foe'}}, system: {identifier: 'favored-enemy'}
+  }), null);
+
+  // 3. System identifier (including mismatched slug from pair identifier)
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '狂暴', system: {identifier: 'rage'}
+  }), 'Rage');
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '狂暴', system: {identifier: 'berserk'}
+  }), null);
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '拨挡', system: {identifier: 'deflect-attacks'}
+  }), 'Deflect Missiles');
+
+  // 4. Complete bilingual name, and opaque hash identifier falls through to bilingual but not plain Chinese
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '狂暴 Rage', system: {identifier: 'feat-8ec40c57e1e9aed7'}
+  }), 'Rage');
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '未知 Rage'
+  }), null);
+  assert.equal(core.resolveItemAlias(plan, {
+    name: '狂暴', system: {identifier: 'feat-8ec40c57e1e9aed7'}
+  }), null);
 });

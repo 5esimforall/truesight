@@ -106,9 +106,11 @@ export function describeGroupingIndex(results, environment={}) {
     const validOrigin=originParts.length===5&&originParts[0]==='Compendium'&&originParts[3]===entry.documentType;
     if (!isItem) {
       entry.kind='document';
-      entry.warning=entry.warning||(!validOrigin?'origin':null);
+      const uuidParts=entry.uuid.split('.');
+      const selfOrigin=uuidParts.length===5&&uuidParts[0]==='Compendium'&&uuidParts[3]===entry.documentType?entry.uuid:null;
       entry.groupReason='origin';
-      entry.context={...entry.context,origin:validOrigin?origin:null};
+      entry.context={...entry.context,origin:validOrigin?origin:selfOrigin};
+      if (!validOrigin&&!selfOrigin) entry.reason='origin';
     } else {
       entry.warning=entry.warning||(!entry.rules?'rules':!entry.id?'identifier':null);
       // Provenance can supply otherwise missing ownership, never resolve an
@@ -121,16 +123,6 @@ export function describeGroupingIndex(results, environment={}) {
       }
     }
     entry.fingerprint=JSON.stringify(['identity-v2',entry.documentType,entry.type,entry.id,entry.rules,entry.context,entry.warning]);
-  }
-  // A visible provenance target participates in its own direct family. No
-  // transitive chains or matching names are used to establish document identity.
-  const origins=new Set([...entries.values()].filter(e=>e.kind==='document'&&!e.warning)
-    .map(e=>JSON.stringify([e.context.origin,e.documentType,e.type])));
-  for (const entry of entries.values()) if(entry.kind==='document'&&entry.warning==='origin') {
-    if (origins.has(JSON.stringify([entry.uuid,entry.documentType,entry.type]))) {
-      entry.warning=null;entry.context.origin=entry.uuid;
-      entry.fingerprint=JSON.stringify(['identity-v2',entry.documentType,entry.type,entry.id,entry.rules,entry.context,null]);
-    }
   }
   for(const entry of entries.values()) if(entry.fingerprint.length>2000) {
     entry.warning='context-size';entry.context=null;
@@ -152,7 +144,7 @@ export function calculateGrouping(results,environment={},preferences=normalizeGr
 const copyEntries = entries => new Map([...entries].map(([id, entry]) => [id, {...entry}]));
 export function calculateDescribedGrouping(described,preferences=normalizeGrouping(),{includeRisk=false}={}) {
   const entries=copyEntries(described),buckets=new Map(),excluded=new Set(preferences.excluded??[]);
-  for(const entry of entries.values()) if(!entry.warning&&!excluded.has(entry.uuid)) {
+  for(const entry of entries.values()) if(!entry.warning&&!excluded.has(entry.uuid)&&(entry.groupReason!=='origin'||entry.context?.origin)) {
     const key=entry.spell?`spell:${entry.rules}:${entry.id}`:
       JSON.stringify([entry.documentType,entry.type,entry.rules,entry.groupReason==='origin'?entry.context.origin:entry.id]);
     addTo(buckets,key,entry);
@@ -215,12 +207,12 @@ export function buildDescribedGroupingCatalog(described,snapshot=null,preference
     const group=previous?.key&&snapshot?.groups?.[previous.key],manual=group?.reason==='reviewed-name';
     const current=previous&&previous.fingerprint===entry.fingerprint&&(!previous.nameFingerprint||previous.nameFingerprint===entry.nameFingerprint)&&(!manual||confirmed.has(previous.key));
     if(!current||snapshot?.ruleVersion!==GROUP_RULE_VERSION||(previous?.warning==="excluded")!==excluded.has(entry.uuid))changed++;
-    if(previous&&!current)entry.warning=entry.warning||"identity";
+    if(previous?.key&&!current)entry.warning=entry.warning||"identity";
     if(excluded.has(entry.uuid))entry.warning="excluded";
     if(snapshot?.ruleVersion===GROUP_RULE_VERSION&&current&&(!entry.warning||manual)&&!excluded.has(entry.uuid)&&group?.members.includes(entry.uuid)) {
       entry.key=previous.key;entry.risk=group.risk;entry.kind=group.kind;addTo(groups,entry.key,entry);
     } else if(current&&previous?.warning&&previous.warning!=="excluded"&&!entry.warning)entry.warning=previous.warning;
-    entry.reason=entry.key?null:entry.warning??(current&&previous.reason!=='excluded'?previous.reason:'awaiting-review');
+    entry.reason=entry.key?null:entry.warning??(current&&previous.reason!=='excluded'?previous.reason:entry.reason??'awaiting-review');
   }
   for(const uuid of Object.keys(snapshot?.records??{}))if(!entries.has(uuid))changed++;
   return {entries,groups,changed};

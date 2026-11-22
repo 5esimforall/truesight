@@ -1,8 +1,11 @@
 import {inScope} from './scope.mjs';
+import {canonicalUuid} from '../catalog/identity.mjs';
+import {validIdentifier} from '../catalog/item-identity.mjs';
 
 const han = /\p{Script=Han}/u;
 const english = name => typeof name === 'string' && /[A-Za-z]/.test(name) && !han.test(name);
 const fold = name => name.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase();
+const slug = value => fold(value).replace(/’/g, "'").replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 // Split only a complete English side, never search for known spell names as substrings.
 function bilingualParts(name) {
@@ -56,15 +59,17 @@ export function planAliases({pairs, lookupNames, existingAliases = {}, groups = 
       if (lookupNames.has(target)) record(candidates, target, source);
     }
   }
-  const evidence = new Map();
+  const evidence = new Map(), identifiers = new Map(), groupTargets = new Map(), disambiguationCandidates = new Map();
   function forName(displayName) {
     if (!evidence.has(displayName)) evidence.set(displayName, new Map());
     return evidence.get(displayName);
   }
-  for (const {translatedName, englishName, source} of pairs) {
+  for (const {translatedName, englishName, source, identifier} of pairs) {
     const candidates = forName(translatedName);
     if (!englishName) { record(candidates, null, source); continue; }
     recordOriginal(candidates, englishName, source);
+    const id = validIdentifier(identifier);
+    if (id) for (const target of lookupTargets(englishName)) if (typeof target === 'string') record(identifiers, target, id);
     const parts = bilingualParts(translatedName);
     if (!parts) recordOriginal(forName(translatedName + ' ' + englishName), englishName, source);
     else {
@@ -77,9 +82,10 @@ export function planAliases({pairs, lookupNames, existingAliases = {}, groups = 
   // cluster's guesses as input. Names remain exact keys in CPR's global table.
   const plans = [];
   for (const [group, members] of groups) {
-    const candidates = new Map();
+    const candidates = new Map(), directCandidates = new Map();
     const displays = new Set();
-    for (const {displayName, originalName, source, lookupNames: memberLookupNames} of members) {
+    for (const {displayName, originalName, source, lookupNames: memberLookupNames, identifier} of members) {
+      const memberDirect = new Map();
       if (han.test(displayName)) displays.add(displayName);
       merge(candidates, evidence.get(displayName));
       const parts = bilingualParts(displayName);
@@ -87,17 +93,42 @@ export function planAliases({pairs, lookupNames, existingAliases = {}, groups = 
         const embedded = new Map();
         recordEmbedded(embedded, parts.english, source);
         merge(candidates, embedded);
+        merge(memberDirect, embedded);
         const translated = evidence.get(parts.chinese);
         // A complete bilingual name may disambiguate a known translation,
         // but it must not contradict every known English original.
         if (embedded.size && translated && [...translated.keys()].some(name => name !== null)
-          && ![...embedded.keys()].some(name => name !== null && translated.has(name))) merge(candidates, translated);
-      } else recordOriginal(candidates, displayName, source);
+          && ![...embedded.keys()].some(name => name !== null && translated.has(name))) {
+          merge(candidates, translated);
+          merge(memberDirect, translated);
+        }
+      } else {
+        recordOriginal(candidates, displayName, source);
+        recordOriginal(memberDirect, displayName, source);
+      }
       recordOriginal(candidates, originalName, source);
-      for (const name of memberLookupNames ?? []) recordOriginal(candidates, name, source);
+      recordOriginal(memberDirect, originalName, source);
+      for (const name of memberLookupNames ?? []) {
+        recordOriginal(candidates, name, source);
+        recordOriginal(memberDirect, name, source);
+      }
       if (Object.hasOwn(existingAliases, displayName)) {
         const target = existingAliases[displayName];
         record(candidates, typeof target === 'string' ? target : null, 'existingAliases#' + displayName);
+        record(memberDirect, typeof target === 'string' ? target : null, 'existingAliases#' + displayName);
+      }
+      merge(directCandidates, memberDirect);
+      const id = validIdentifier(identifier);
+      if (id) for (const target of memberDirect.keys()) if (typeof target === 'string') record(identifiers, target, id);
+    }
+    if (displays.size && directCandidates.size === 1 && !directCandidates.has(null)) {
+      const [target] = directCandidates.keys();
+      if (typeof target === 'string' && lookupNames.has(target)) {
+        const displaySet = new Set(displays);
+        for (const member of members) {
+          const uuid = canonicalUuid({uuid: member.source, documentType: 'Item'});
+          if (uuid) groupTargets.set(uuid, {target, displays: displaySet});
+        }
       }
     }
     plans.push({group, members, candidates, displays});
@@ -123,7 +154,10 @@ export function planAliases({pairs, lookupNames, existingAliases = {}, groups = 
       }
     }
     if (combined.size > 1 || combined.has(null)) {
-      for (const name of displays) blocked.add(name);
+      for (const name of displays) {
+        blocked.add(name);
+        for (const candidate of combined.keys()) record(disambiguationCandidates, name, candidate);
+      }
       const originals = [...combined.keys()].filter(name => name !== null);
       const reason = originals.filter(name => lookupNames.has(name)).length > 1 ? 'multiple-lookup-targets'
         : originals.length > 1 ? 'conflicting-originals' : 'unknown-original';
@@ -137,6 +171,7 @@ export function planAliases({pairs, lookupNames, existingAliases = {}, groups = 
   if (report.clusterErrors.length) report.status = 'cluster-conflict';
   for (const [displayName, candidates] of evidence) {
     if (candidates.size > 1 || candidates.has(null)) {
+      for (const candidate of candidates.keys()) record(disambiguationCandidates, displayName, candidate);
       report.conflicts.push({displayName, reason: candidates.has(null) ? 'unknown-original' : 'ambiguous-name',
         candidates: describe(candidates)});
       continue;
@@ -148,5 +183,56 @@ export function planAliases({pairs, lookupNames, existingAliases = {}, groups = 
     aliases.set(displayName, lookupName);
     report.planned++;
   }
-  return {aliases, report: {...report, scope}};
+  return {
+    aliases,
+    report: {...report, scope},
+    disambiguation: {
+      identifiers,
+      groupTargets,
+      candidates: disambiguationCandidates,
+      lookupNames: new Set(lookupNames),
+      existingAliases: Object.assign(Object.create(null), existingAliases)
+    }
+  };
+}
+
+export function resolveItemAlias(plan, item) {
+  if (!plan || !item || typeof item.name !== 'string') return null;
+  if (plan.aliases?.has(item.name)) return plan.aliases.get(item.name);
+  const info = plan.disambiguation;
+  if (!info || !han.test(item.name)) return null;
+  if (Object.hasOwn(info.existingAliases, item.name) || info.lookupNames.has(item.name)) return null;
+  const eligible = target => typeof target === 'string' && info.lookupNames.has(target) ? target : null;
+
+  for (const raw of [item.uuid, item._stats?.compendiumSource]) {
+    if (typeof raw !== 'string' || !raw.trim()) continue;
+    const match = info.groupTargets.get(canonicalUuid({uuid: raw, documentType: 'Item'}));
+    if (match?.displays.has(item.name)) return eligible(match.target);
+  }
+
+  const parts = bilingualParts(item.name);
+  const candidates = info.candidates.get(item.name) ?? (parts ? info.candidates.get(parts.chinese) : null);
+  const known = [...(candidates ?? [])].filter(name => typeof name === 'string');
+  if (!known.length) return null;
+
+  const original = [item.flags?.babele?.originalName, item.originalName].find(english);
+  if (original) {
+    const matches = known.filter(name => fold(name) === fold(original)
+      || Object.entries(info.existingAliases).some(([alias, target]) => target === name && fold(alias) === fold(original)));
+    return matches.length === 1 ? eligible(matches[0]) : null;
+  }
+
+  const id = validIdentifier(item.system?.identifier);
+  if (id) {
+    const matches = known.filter(name => slug(name) === id || info.identifiers.get(name)?.has(id));
+    if (matches.length === 1) return eligible(matches[0]);
+    if (matches.length > 1) return null;
+  }
+
+  if (parts) {
+    const matches = known.filter(name => fold(name) === fold(parts.english));
+    if (matches.length === 1) return eligible(matches[0]);
+  }
+
+  return null;
 }
