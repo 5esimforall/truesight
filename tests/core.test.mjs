@@ -230,3 +230,40 @@ test('resolveItemAlias disambiguates conflicts via reviewed groups, originalName
     name: '狂暴', system: {identifier: 'feat-8ec40c57e1e9aed7'}
   }), null);
 });
+
+test('planAliases handles fullwidth bilingual names, isolated vs shared-display groups, English-only conflicts, and spelling variants', () => {
+  const pairs = [
+    {translatedName: '火球术 Ｆｉｒｅｂａｌｌ', englishName: 'Fireball', source: 'phb#Fireball'},
+    {translatedName: '重名', englishName: 'Lay on Hands', source: 'phb14#Lay'}
+  ];
+  const groups = new Map([
+    ['isolated-clean', [{displayName: '法师护甲 Ｍａｇｅ　Ａｒｍｏｒ', source: 'Compendium.p.Item.ma'}]],
+    ['isolated-conflict', [
+      {displayName: '孤立冲突', source: 'Compendium.p.Item.ic1', originalName: 'Fireball'},
+      {displayName: '孤立冲突', source: 'Compendium.p.Item.ic2', originalName: 'Lay On Hands'}
+    ]],
+    ['shared-a', [{displayName: '跨组同名', source: 'Compendium.p.Item.sa', originalName: 'Fireball'}]],
+    ['shared-b', [{displayName: '跨组同名', source: 'Compendium.p.Item.sb', originalName: 'Lay On Hands'}]],
+    ['english-only-conflict', [
+      {displayName: 'English Only', source: 'Compendium.p.Item.e1', originalName: 'Fireball'},
+      {displayName: 'English Only', source: 'Compendium.p.Item.e2', originalName: 'Lay On Hands'}
+    ]]
+  ]);
+  const lookupNames = new Set(['Fireball', 'Mage Armor', 'Lay On Hands']);
+  const existingAliases = {Blocked: null, 'Lay on Hands': 'Lay On Hands'};
+  const plan = core.planAliases({pairs, lookupNames, existingAliases, groups});
+
+  assert.equal(plan.aliases.get('火球术 Ｆｉｒｅｂａｌｌ'), 'Fireball');
+  assert.equal(plan.aliases.get('火球术'), 'Fireball');
+  assert.equal(plan.aliases.get('法师护甲 Ｍａｇｅ　Ａｒｍｏｒ'), 'Mage Armor');
+  assert.equal(plan.aliases.get('重名'), 'Lay On Hands');
+  assert.equal(plan.aliases.has('孤立冲突'), false);
+  assert.equal(plan.aliases.has('跨组同名'), false);
+  assert.equal(plan.aliases.has('Blocked'), false);
+  assert.deepEqual(plan.report.clusterErrors.map(e => e.groups).sort((a, b) => a.length - b.length || a[0].localeCompare(b[0])), [
+    ['english-only-conflict'],
+    ['isolated-conflict'],
+    ['shared-a', 'shared-b']
+  ]);
+  assert.equal(plan.report.status, 'cluster-conflict');
+});

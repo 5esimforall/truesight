@@ -491,3 +491,91 @@ test('incremental describeGroupingIndex reuses untouched entries, detects owner 
   assert.equal(before.entries.has('Item.barbarian'), false);
   f.service.destroy();
 });
+
+test('creating/deleting monsters, non-item documents, and folder moves skip names/access while updating catalog and visibleLocalItems', async t => {
+  const f = runtimeFixture();
+  f.qi.hasIndex = true;
+  const old = globalThis.game;
+  t.after(() => { globalThis.game = old; f.service.destroy(); });
+  globalThis.game = f.game;
+  connectCatalog(f.service);
+  f.game.packs.get('fixture.spells').documentName = 'Item';
+  f.game.packs.get('fixture.spells').getIndex = async () => new Map();
+  const events = [];
+  f.hooks.on('truesightChanged', change => events.push(change));
+  f.service.read();
+  const baseRevs = {...f.service.getStatus().revisions};
+
+  const monsterRow = {item: {uuid: 'Actor.m1', package: undefined, name: '哥布林', documentType: 'Actor', subType: 'npc', system: {source: {rules: '2014'}}}};
+  const monsterDoc = {
+    id: 'm1', uuid: 'Actor.m1', type: 'npc', name: '哥布林', visible: true,
+    testUserPermission: () => true,
+    items: new Map([
+      ['f1', {id: 'f1', uuid: 'Actor.m1.Item.f1', name: '狂暴', type: 'feat'}],
+      ['s1', {id: 's1', uuid: 'Actor.m1.Item.s1', name: '火球术', type: 'spell'}]
+    ])
+  };
+  for (const item of monsterDoc.items.values()) item.parent = monsterDoc;
+  f.rows.push(monsterRow);
+  f.game.actors.set('m1', monsterDoc);
+  f.hooks.callAll('createActor', monsterDoc, {});
+  for (const item of monsterDoc.items.values()) {
+    f.hooks.callAll('createItem', item, {});
+    f.hooks.callAll('updateItem', item, {name: item.name + '改'});
+    f.hooks.callAll('deleteItem', item, {});
+  }
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0].changes, ['identity']);
+  assert.equal(f.service.getStatus().revisions.names, baseRevs.names);
+  assert.equal(f.service.getStatus().revisions.access, baseRevs.access);
+  assert.equal(f.service.getStatus().revisions.packs, baseRevs.packs);
+  assert.ok(f.service.read().entries.has('Actor.m1'));
+
+  f.rows.pop();
+  f.game.actors.delete('m1');
+  f.hooks.callAll('deleteActor', monsterDoc, {});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(events.length, 2);
+  assert.deepEqual(events[1].changes, ['identity']);
+  assert.equal(f.service.read().entries.has('Actor.m1'), false);
+
+  for (const type of ['Scene', 'JournalEntry', 'Macro', 'RollTable']) {
+    const doc = {id: 'd1', uuid: `${type}.d1`, name: '测试'};
+    f.hooks.callAll(`create${type}`, doc, {});
+    f.hooks.callAll(`update${type}`, doc, {name: '测试改'});
+    f.hooks.callAll(`update${type}`, doc, {folder: 'folder1'});
+    f.hooks.callAll(`delete${type}`, doc, {});
+  }
+  f.hooks.callAll('createFolder', {id: 'f1', type: 'Actor', name: 'Monsters'}, {});
+  f.hooks.callAll('updateFolder', {id: 'f1', type: 'Actor', name: 'Monsters 2'}, {name: 'Monsters 2'});
+  f.hooks.callAll('deleteFolder', {id: 'f1', type: 'Actor', name: 'Monsters 2'}, {});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(events.every(e => !e.changes.includes('names') && !e.changes.includes('access')), true);
+  assert.equal(f.service.getStatus().revisions.names, baseRevs.names);
+  assert.equal(f.service.getStatus().revisions.access, baseRevs.access);
+  assert.equal(f.service.getStatus().revisions.packs, baseRevs.packs);
+
+  f.game.items.set('w1', {id: 'w1', uuid: 'Item.w1', name: '迷踪步', type: 'spell', visible: true});
+  f.game.actors.set('npc1', {
+    id: 'npc1', type: 'npc', testUserPermission: () => true,
+    items: new Map([['i1', {uuid: 'Actor.npc1.Item.i1', name: '狂暴', type: 'feat'}]])
+  });
+  f.game.actors.set('veh1', {
+    id: 'veh1', type: 'vehicle', testUserPermission: () => true,
+    items: new Map([['i1', {uuid: 'Actor.veh1.Item.i1', name: '攻城锤', type: 'weapon'}]])
+  });
+  f.game.actors.set('pc1', {
+    id: 'pc1', type: 'character', testUserPermission: () => true,
+    items: new Map([['i1', {uuid: 'Actor.pc1.Item.i1', name: '不屈', type: 'feat'}]])
+  });
+  f.game.actors.set('npcClassed', {
+    id: 'npcClassed', type: 'npc', testUserPermission: () => true,
+    items: new Map([
+      ['c1', {uuid: 'Actor.npcClassed.Item.c1', name: 'Fighter', type: 'class'}],
+      ['i2', {uuid: 'Actor.npcClassed.Item.i2', name: '动作如潮', type: 'feat'}]
+    ])
+  });
+  const corpus = await core.loadCorpus();
+  assert.deepEqual(corpus.localItems.map(item => item.uuid).sort(), ['Actor.npcClassed.Item.i2', 'Actor.pc1.Item.i1', 'Item.w1']);
+});

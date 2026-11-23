@@ -1,4 +1,5 @@
 import {catalog} from '../catalog/api.mjs';
+import {effectiveActorType, isNonCharacterActor} from '../changes.mjs';
 import {GROUP_FIELDS, loadGrouping} from './groups.mjs';
 import {TRANSLATION_MODULE} from './translations.mjs';
 
@@ -9,11 +10,7 @@ export function sourceError(error, source = error?.source ?? null) {
 function rowActorType(row) {
   if (typeof row?.actorType === 'string' && row.actorType) return row.actorType;
   const actor = row?.actor ?? (row?.parent?.items ? row.parent : null);
-  if (!actor || typeof actor !== 'object') return undefined;
-  const items = typeof actor.items?.values === 'function' ? actor.items.values()
-    : Array.isArray(actor.items) ? actor.items : [];
-  for (const entry of items) if (entry?.type === 'class') return 'character';
-  return typeof actor.type === 'string' && actor.type ? actor.type : undefined;
+  return effectiveActorType(actor) ?? undefined;
 }
 
 const HAN = /\p{Script=Han}/u;
@@ -142,6 +139,7 @@ function* visibleLocalItems(game) {
     if (item.visible && typeof item.name === 'string' && HAN.test(item.name)) yield item;
   }
   for (const actor of game.actors?.values() ?? []) {
+    if (isNonCharacterActor(actor)) continue;
     if (actor.testUserPermission(game.user, 'OBSERVER')) {
       for (const item of actor.items?.values?.() ?? []) {
         if (typeof item.name === 'string' && HAN.test(item.name)) yield item;

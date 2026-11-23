@@ -3,8 +3,16 @@
  * bursts without stale output. */
 export function createRefreshQueue({invalidate, build}) {
   let generation = 0, pending = false, immediatePending = false;
-  let running = null, pendingOptions, timer = null;
+  let running = null, pendingOptions, timer = null, idleHandle = null;
   let delayedPromise = null, delayedResolve = null, delayedReject = null;
+
+  function cancelScheduled() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (idleHandle !== null) {
+      globalThis.cancelIdleCallback?.(idleHandle);
+      idleHandle = null;
+    }
+  }
 
   function settleDelayed(run) {
     if (!delayedResolve) return;
@@ -16,7 +24,7 @@ export function createRefreshQueue({invalidate, build}) {
 
   async function drain() {
     try {
-      while (pending && !timer) {
+      while (pending && !timer && idleHandle === null) {
         pending = false;
         immediatePending = false;
         const current = generation;
@@ -42,7 +50,7 @@ export function createRefreshQueue({invalidate, build}) {
       invalidate(options);
       if (immediate) {
         immediatePending = true;
-        if (timer) { clearTimeout(timer); timer = null; }
+        cancelScheduled();
         const run = startDrain();
         settleDelayed(run);
         return run;
@@ -53,10 +61,23 @@ export function createRefreshQueue({invalidate, build}) {
           delayedReject = reject;
         });
       }
-      clearTimeout(timer);
+      cancelScheduled();
       timer = setTimeout(() => {
         timer = null;
         if (!pending) { settleDelayed(null); return; }
+        if (pendingOptions?.idle && typeof globalThis.requestIdleCallback === 'function') {
+          const timeout = Number.isFinite(pendingOptions.idleTimeout) && pendingOptions.idleTimeout > 0
+            ? pendingOptions.idleTimeout : 1500;
+          let fired = false;
+          const handle = globalThis.requestIdleCallback(() => {
+            fired = true;
+            idleHandle = null;
+            if (!pending) { settleDelayed(null); return; }
+            settleDelayed(startDrain());
+          }, {timeout});
+          if (!fired) idleHandle = handle;
+          return;
+        }
         settleDelayed(startDrain());
       }, requestedDelay);
       return delayedPromise;
@@ -66,7 +87,7 @@ export function createRefreshQueue({invalidate, build}) {
       pending = false;
       immediatePending = false;
       pendingOptions = undefined;
-      if (timer) { clearTimeout(timer); timer = null; }
+      cancelScheduled();
       settleDelayed(null);
     }
   };

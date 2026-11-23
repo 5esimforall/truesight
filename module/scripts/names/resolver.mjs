@@ -2,8 +2,9 @@ import {inScope} from './scope.mjs';
 import {canonicalUuid} from '../catalog/identity.mjs';
 import {validIdentifier} from '../catalog/item-identity.mjs';
 
+const ascii = /[A-Za-z]/;
 const han = /\p{Script=Han}/u;
-const english = name => typeof name === 'string' && /[A-Za-z]/.test(name) && !han.test(name);
+const english = name => typeof name === 'string' && ascii.test(name) && !han.test(name);
 const fold = name => name.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase();
 const slug = value => fold(value).replace(/’/g, "'").replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
@@ -11,6 +12,7 @@ const slug = value => fold(value).replace(/’/g, "'").replace(/[^a-z0-9]+/g, '-
 function bilingualParts(name) {
   if (!han.test(name)) return null;
   const normalized = name.normalize('NFKC').trim();
+  if (!ascii.test(normalized)) return null;
   const parts = normalized.match(/^([^A-Za-z]+?)\s*\(([^()]+)\)$/u)
     ?? normalized.match(/^([^A-Za-z]+?)\s+([A-Za-z].*)$/u)
     ?? normalized.match(/^([^A-Za-z]*\p{Script=Han})([A-Za-z].*)$/u);
@@ -23,8 +25,9 @@ function bilingualParts(name) {
 }
 
 function record(map, key, value) {
-  if (!map.has(key)) map.set(key, new Set());
-  map.get(key).add(value);
+  let set = map.get(key);
+  if (!set) { set = new Set(); map.set(key, set); }
+  set.add(value);
 }
 function merge(into, from) {
   for (const [name, sources] of from ?? []) for (const source of sources) record(into, name, source);
@@ -36,54 +39,84 @@ function describe(candidates) {
 
 export function planAliases({pairs, lookupNames, existingAliases = {}, groups = new Map(), scope = null}) {
   const aliases = new Map();
-  pairs = pairs.filter(pair => inScope(pair, scope));
-  groups = new Map([...groups].map(([key, members]) => [key, members.filter(member => inScope(member, scope))])
-    .filter(([, members]) => members.length));
-  const spellings = new Map();
-  for (const name of [...lookupNames, ...Object.keys(existingAliases)]) {
-    if (english(name)) record(spellings, fold(name), name);
+  const spellings = new Map(), foldCache = new Map();
+  const folded = name => {
+    let cached = foldCache.get(name);
+    if (cached === undefined) {
+      cached = fold(name);
+      foldCache.set(name, cached);
+    }
+    return cached;
+  };
+  for (const name of lookupNames) if (english(name)) record(spellings, folded(name), name);
+  for (const name of Object.keys(existingAliases)) if (english(name)) record(spellings, folded(name), name);
+  const targetsByFold = new Map(), embeddedByFold = new Map();
+  for (const [foldedName, set] of spellings) {
+    const all = [], matched = [];
+    for (const spelling of set) {
+      const raw = Object.hasOwn(existingAliases, spelling) ? existingAliases[spelling] : spelling;
+      const target = typeof raw === 'string' ? raw : null;
+      all.push(target);
+      if (lookupNames.has(target)) matched.push(target);
+    }
+    targetsByFold.set(foldedName, all);
+    if (matched.length) embeddedByFold.set(foldedName, matched);
   }
   // Resolve against the provider snapshot, before publishing any aliases.
-  function* lookupTargets(name) {
-    if (!english(name)) return;
-    for (const spelling of spellings.get(fold(name)) ?? [name]) {
-      const target = Object.hasOwn(existingAliases, spelling) ? existingAliases[spelling] : spelling;
-      yield typeof target === 'string' ? target : null;
-    }
+  function targetsFor(name) {
+    if (!english(name)) return null;
+    const hit = targetsByFold.get(folded(name));
+    if (hit) return hit;
+    const raw = Object.hasOwn(existingAliases, name) ? existingAliases[name] : name;
+    return [typeof raw === 'string' ? raw : null];
   }
-  function recordOriginal(candidates, name, source) {
-    for (const target of lookupTargets(name)) record(candidates, target, source);
+  function recordTargets(candidates, targets, source) {
+    if (!targets) return;
+    for (const target of targets) record(candidates, target, source);
   }
   function recordEmbedded(candidates, name, source) {
-    for (const target of lookupTargets(name)) {
-      if (lookupNames.has(target)) record(candidates, target, source);
-    }
+    if (!english(name)) return;
+    const matched = embeddedByFold.get(folded(name));
+    if (matched) for (const target of matched) record(candidates, target, source);
   }
   const evidence = new Map(), identifiers = new Map(), groupTargets = new Map(), disambiguationCandidates = new Map();
   function forName(displayName) {
-    if (!evidence.has(displayName)) evidence.set(displayName, new Map());
-    return evidence.get(displayName);
+    let entry = evidence.get(displayName);
+    if (!entry) { entry = new Map(); evidence.set(displayName, entry); }
+    return entry;
   }
-  for (const {translatedName, englishName, source, identifier} of pairs) {
+  for (const pair of pairs) {
+    if (scope && !inScope(pair, scope)) continue;
+    const {translatedName, englishName, source, identifier} = pair;
     const candidates = forName(translatedName);
     if (!englishName) { record(candidates, null, source); continue; }
-    recordOriginal(candidates, englishName, source);
+    const targets = targetsFor(englishName);
+    recordTargets(candidates, targets, source);
     const id = validIdentifier(identifier);
-    if (id) for (const target of lookupTargets(englishName)) if (typeof target === 'string') record(identifiers, target, id);
+    if (id && targets) for (const target of targets) if (typeof target === 'string') record(identifiers, target, id);
     const parts = bilingualParts(translatedName);
-    if (!parts) recordOriginal(forName(translatedName + ' ' + englishName), englishName, source);
+    if (!parts) recordTargets(forName(translatedName + ' ' + englishName), targets, source);
     else {
       recordEmbedded(candidates, parts.english, source);
-      if (fold(parts.english) === fold(englishName)) recordOriginal(forName(parts.chinese), englishName, source);
+      if (folded(parts.english) === folded(englishName)) recordTargets(forName(parts.chinese), targets, source);
     }
   }
 
   // Collect from independent sources first. One cluster must never use another
   // cluster's guesses as input. Names remain exact keys in CPR's global table.
   const plans = [];
-  for (const [group, members] of groups) {
-    const candidates = new Map(), directCandidates = new Map();
+  for (const [group, rawMembers] of groups) {
+    const members = scope ? rawMembers.filter(member => inScope(member, scope)) : rawMembers;
+    if (!members.length) continue;
+    const candidates = new Map();
+    let directCandidates = null;
     const displays = new Set();
+    const recordBoth = (memberDirect, name, source) => {
+      const targets = targetsFor(name);
+      if (!targets) return;
+      recordTargets(candidates, targets, source);
+      recordTargets(memberDirect, targets, source);
+    };
     for (const {displayName, originalName, source, lookupNames: memberLookupNames, identifier} of members) {
       const memberDirect = new Map();
       if (han.test(displayName)) displays.add(displayName);
@@ -92,36 +125,47 @@ export function planAliases({pairs, lookupNames, existingAliases = {}, groups = 
       if (parts) {
         const embedded = new Map();
         recordEmbedded(embedded, parts.english, source);
-        merge(candidates, embedded);
-        merge(memberDirect, embedded);
-        const translated = evidence.get(parts.chinese);
-        // A complete bilingual name may disambiguate a known translation,
-        // but it must not contradict every known English original.
-        if (embedded.size && translated && [...translated.keys()].some(name => name !== null)
-          && ![...embedded.keys()].some(name => name !== null && translated.has(name))) {
-          merge(candidates, translated);
-          merge(memberDirect, translated);
+        if (embedded.size) {
+          merge(candidates, embedded);
+          merge(memberDirect, embedded);
+          const translated = evidence.get(parts.chinese);
+          // A complete bilingual name may disambiguate a known translation,
+          // but it must not contradict every known English original.
+          if (translated) {
+            let hasTranslatedNonNull = false, hasOverlap = false;
+            for (const name of translated.keys()) {
+              if (name !== null) {
+                hasTranslatedNonNull = true;
+                if (embedded.has(name)) { hasOverlap = true; break; }
+              }
+            }
+            if (hasTranslatedNonNull && !hasOverlap) {
+              merge(candidates, translated);
+              merge(memberDirect, translated);
+            }
+          }
         }
       } else {
-        recordOriginal(candidates, displayName, source);
-        recordOriginal(memberDirect, displayName, source);
+        recordBoth(memberDirect, displayName, source);
       }
-      recordOriginal(candidates, originalName, source);
-      recordOriginal(memberDirect, originalName, source);
-      for (const name of memberLookupNames ?? []) {
-        recordOriginal(candidates, name, source);
-        recordOriginal(memberDirect, name, source);
-      }
+      recordBoth(memberDirect, originalName, source);
+      for (const name of memberLookupNames ?? []) recordBoth(memberDirect, name, source);
       if (Object.hasOwn(existingAliases, displayName)) {
         const target = existingAliases[displayName];
-        record(candidates, typeof target === 'string' ? target : null, 'existingAliases#' + displayName);
-        record(memberDirect, typeof target === 'string' ? target : null, 'existingAliases#' + displayName);
+        const normalizedTarget = typeof target === 'string' ? target : null;
+        const aliasSource = 'existingAliases#' + displayName;
+        record(candidates, normalizedTarget, aliasSource);
+        record(memberDirect, normalizedTarget, aliasSource);
       }
-      merge(directCandidates, memberDirect);
+      if (members.length === 1) directCandidates = memberDirect;
+      else {
+        directCandidates ??= new Map();
+        merge(directCandidates, memberDirect);
+      }
       const id = validIdentifier(identifier);
       if (id) for (const target of memberDirect.keys()) if (typeof target === 'string') record(identifiers, target, id);
     }
-    if (displays.size && directCandidates.size === 1 && !directCandidates.has(null)) {
+    if (displays.size && directCandidates?.size === 1 && !directCandidates.has(null)) {
       const [target] = directCandidates.keys();
       if (typeof target === 'string' && lookupNames.has(target)) {
         const displaySet = new Set(displays);
@@ -139,10 +183,42 @@ export function planAliases({pairs, lookupNames, existingAliases = {}, groups = 
   for (const plan of plans) for (const name of plan.displays) record(byDisplay, name, plan);
   const visited = new Set(), blocked = new Set();
   const report = {status: 'ready', planned: 0, existing: 0, unsupported: 0, conflicts: [], clusterErrors: []};
+  function finishComponent(component, combined, displays) {
+    if (combined.size > 1 || combined.has(null)) {
+      for (const name of displays) {
+        blocked.add(name);
+        for (const candidate of combined.keys()) record(disambiguationCandidates, name, candidate);
+      }
+      const originals = [...combined.keys()].filter(name => name !== null);
+      const reason = originals.filter(name => lookupNames.has(name)).length > 1 ? 'multiple-lookup-targets'
+        : originals.length > 1 ? 'conflicting-originals' : 'unknown-original';
+      report.clusterErrors.push({
+        reason,
+        groups: component.length === 1 ? [component[0].group] : component.map(p => p.group).sort(),
+        members: (component.length === 1 ? [...component[0].members] : component.flatMap(p => p.members))
+          .sort((a, b) => a.source.localeCompare(b.source)),
+        candidates: describe(combined)
+      });
+      return;
+    }
+    if (component.length === 1) {
+      for (const name of displays) merge(forName(name), combined);
+      return;
+    }
+    for (const plan of component) for (const name of plan.displays) merge(forName(name), plan.candidates);
+  }
   for (const seed of plans) {
     if (visited.has(seed)) continue;
-    const component = [seed], combined = new Map(), displays = new Set();
     visited.add(seed);
+    let isolated = true;
+    for (const name of seed.displays) {
+      if (byDisplay.get(name).size > 1) { isolated = false; break; }
+    }
+    if (isolated) {
+      finishComponent([seed], seed.candidates, seed.displays);
+      continue;
+    }
+    const component = [seed], combined = new Map(), displays = new Set();
     for (const plan of component) {
       merge(combined, plan.candidates);
       for (const name of plan.displays) {
@@ -153,20 +229,7 @@ export function planAliases({pairs, lookupNames, existingAliases = {}, groups = 
         }
       }
     }
-    if (combined.size > 1 || combined.has(null)) {
-      for (const name of displays) {
-        blocked.add(name);
-        for (const candidate of combined.keys()) record(disambiguationCandidates, name, candidate);
-      }
-      const originals = [...combined.keys()].filter(name => name !== null);
-      const reason = originals.filter(name => lookupNames.has(name)).length > 1 ? 'multiple-lookup-targets'
-        : originals.length > 1 ? 'conflicting-originals' : 'unknown-original';
-      report.clusterErrors.push({reason, groups: component.map(p => p.group).sort(),
-        members: component.flatMap(p => p.members).sort((a, b) => a.source.localeCompare(b.source)),
-        candidates: describe(combined)});
-      continue;
-    }
-    for (const plan of component) for (const name of plan.displays) merge(forName(name), plan.candidates);
+    finishComponent(component, combined, displays);
   }
   if (report.clusterErrors.length) report.status = 'cluster-conflict';
   for (const [displayName, candidates] of evidence) {

@@ -3,7 +3,7 @@ import {createPlutoniumCnProvider} from './providers/plutonium-cn.mjs';
 import {createPublisher} from './catalog/publisher.mjs';
 import {CatalogService, CatalogError} from './catalog/service.mjs';
 import {GROUP_INDEX_FIELDS, canonicalUuid} from './catalog/identity.mjs';
-import {classifyChange, isLocalDocumentChange, isEmbeddedActorItem, isTokenDocument, INDEXED_DOCUMENT_TYPES} from './changes.mjs';
+import {classifyChange, isLocalDocumentChange, isEmbeddedActorItem, isTokenDocument, isNonCharacterActor, INDEXED_DOCUMENT_TYPES} from './changes.mjs';
 
 export const MODULE_ID = 'truesight';
 export const CHANGED = 'truesightChanged';
@@ -207,11 +207,12 @@ export function createRuntime({game, hooks, config, quickInsert = () => globalTh
       if (!changes.length) return;
       const local = isLocalDocumentChange(event, document, {indexedTypes});
       const embeddedActorItem = isEmbeddedActorItem(event, document) && !embeddedIndexing;
+      const embeddedNpcItem = isEmbeddedActorItem(event, document) && document?.type !== 'class' && isNonCharacterActor(document.parent);
       const isItem = /^(?:create|update|delete)Item$/.test(event);
       const isCompendiumOrFolder = /^(?:create|update|delete)(?:Compendium|Folder)$/.test(event);
       const affectsNames = changes.includes('names') || changes.includes('access')
         || isCompendiumOrFolder
-        || (isItem && (!local || ['class', 'subclass', 'race', 'background'].includes(document?.type) || typeof document?.name !== 'string'));
+        || (isItem && !embeddedNpcItem && (!local || ['class', 'subclass', 'race', 'background'].includes(document?.type) || typeof document?.name !== 'string'));
       const uuid = !changes.includes('access') && !isCompendiumOrFolder && event !== 'updateUser' && event !== 'updateSetting'
         && !(embeddedIndexing && event === 'updateActor')
         ? documentUuid(event, document) : null;

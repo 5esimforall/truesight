@@ -104,3 +104,64 @@ test('delayed requests coalesce bursts, preempt cleanly for immediate requests, 
   fail = false;
   await failingQueue.request({delay: 10});
 });
+
+test('idle-scheduled refreshes wait for requestIdleCallback after debounce and cancel cleanly on preemption or stop', async t => {
+  const origReq = globalThis.requestIdleCallback, origCancel = globalThis.cancelIdleCallback;
+  const scheduled = [], cancelled = [];
+  let nextHandle = 10;
+  globalThis.requestIdleCallback = (cb, opts) => {
+    const id = ++nextHandle;
+    scheduled.push({id, cb, opts});
+    return id;
+  };
+  globalThis.cancelIdleCallback = id => {
+    cancelled.push(id);
+    const idx = scheduled.findIndex(entry => entry.id === id);
+    if (idx >= 0) scheduled.splice(idx, 1);
+  };
+  t.after(() => {
+    if (origReq === undefined) delete globalThis.requestIdleCallback;
+    else globalThis.requestIdleCallback = origReq;
+    if (origCancel === undefined) delete globalThis.cancelIdleCallback;
+    else globalThis.cancelIdleCallback = origCancel;
+  });
+
+  let builds = 0;
+  const tags = [];
+  const queue = createRefreshQueue({
+    invalidate: () => {},
+    build: async (_isCurrent, opts) => { builds++; tags.push(opts?.tag); }
+  });
+
+  const idlePromise = queue.request({delay: 15, idle: true, idleTimeout: 900, tag: 'idle1'});
+  await new Promise(r => setTimeout(r, 25));
+  assert.equal(builds, 0);
+  assert.equal(scheduled.length, 1);
+  assert.deepEqual(scheduled[0].opts, {timeout: 900});
+  scheduled.shift().cb();
+  await idlePromise;
+  assert.equal(builds, 1);
+  assert.deepEqual(tags, ['idle1']);
+
+  // Immediate/retract request cancels pending idle callback
+  const idle2 = queue.request({delay: 15, idle: true, tag: 'idle2'});
+  await new Promise(r => setTimeout(r, 25));
+  assert.equal(scheduled.length, 1);
+  const idle2Id = scheduled[0].id;
+  await Promise.all([idle2, queue.request({retract: true, tag: 'retract'})]);
+  assert.ok(cancelled.includes(idle2Id));
+  assert.equal(builds, 2);
+  assert.deepEqual(tags, ['idle1', 'retract']);
+
+  // stop() cancels pending idle callback and resolves waiter without running build
+  const idle3 = queue.request({delay: 15, idle: true, tag: 'idle3'});
+  await new Promise(r => setTimeout(r, 25));
+  assert.equal(scheduled.length, 1);
+  const stale = scheduled[0];
+  queue.stop();
+  await idle3;
+  assert.ok(cancelled.includes(stale.id));
+  stale.cb();
+  await tick();
+  assert.equal(builds, 2);
+});

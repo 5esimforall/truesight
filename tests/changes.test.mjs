@@ -85,3 +85,76 @@ test('blank or English-only world actors skip names while Han-item actors and ow
   assert.deepEqual(classify('createItem', undefined, {id: 'i1', uuid: 'Item.i1', type: 'weapon', name: 'Longsword'}), ['identity']);
   assert.deepEqual(classify('createItem', undefined, {id: 'c1', uuid: 'Item.c1', type: 'class', name: 'Fighter'}), ['identity', 'names']);
 });
+test('non-character actors and their non-class embedded items do not emit names', () => {
+  const monster = {
+    id: 'm1', uuid: 'Actor.m1', type: 'npc',
+    items: new Map([
+      ['f1', {id: 'f1', name: '狂暴', type: 'feat'}],
+      ['w1', {id: 'w1', name: '啃咬', type: 'weapon'}],
+      ['s1', {id: 's1', name: '火球术', type: 'spell'}]
+    ])
+  };
+  assert.deepEqual(classify('createActor', undefined, monster), ['identity']);
+  assert.deepEqual(classify('deleteActor', undefined, monster), ['identity']);
+  assert.deepEqual(classify('updateActor', {items: []}, monster), ['identity']);
+  assert.deepEqual(classify('updateActor', {folder: 'f1'}, monster), []);
+  assert.deepEqual(classify('updateActor', {type: 'character'}, monster), ['identity', 'names']);
+
+  const vehicle = {id: 'v1', uuid: 'Actor.v1', type: 'vehicle', items: new Map([['w1', {name: '攻城锤', type: 'weapon'}]])};
+  const group = {id: 'g1', uuid: 'Actor.g1', type: 'group', items: new Map([['w1', {name: '行囊', type: 'backpack'}]])};
+  assert.deepEqual(classify('createActor', undefined, vehicle), ['identity']);
+  assert.deepEqual(classify('deleteActor', undefined, group), ['identity']);
+
+  const classedNpc = {
+    id: 'm2', uuid: 'Actor.m2', type: 'npc',
+    items: new Map([['c1', {name: 'Fighter', type: 'class'}], ['s1', {name: '火球术', type: 'spell'}]])
+  };
+  assert.deepEqual(classify('createActor', undefined, classedNpc), ['identity', 'names']);
+
+  const npcTrait = {id: 'f1', uuid: 'Actor.m1.Item.f1', name: '狂暴', type: 'feat', parent: monster};
+  const npcSpell = {id: 's1', uuid: 'Actor.m1.Item.s1', name: '火球术', type: 'spell', parent: monster};
+  for (const item of [npcTrait, npcSpell]) {
+    assert.deepEqual(classify('createItem', undefined, item), []);
+    assert.deepEqual(classify('deleteItem', undefined, item), []);
+    assert.deepEqual(classify('updateItem', {name: '新名称'}, item), []);
+    assert.deepEqual(classify('createItem', undefined, item, {embeddedIndexing: true}), ['identity']);
+    assert.deepEqual(classify('deleteItem', undefined, item, {embeddedIndexing: true}), ['identity']);
+    assert.deepEqual(classify('updateItem', {name: '新名称'}, item, {embeddedIndexing: true}), ['display']);
+  }
+
+  const classOnNpc = {id: 'c1', uuid: 'Actor.m1.Item.c1', name: 'Fighter', type: 'class', parent: monster};
+  assert.deepEqual(classify('createItem', undefined, classOnNpc), ['names']);
+  assert.deepEqual(classify('deleteItem', undefined, classOnNpc), ['names']);
+  assert.deepEqual(classify('createItem', undefined, classOnNpc, {embeddedIndexing: true}), ['identity', 'names']);
+  assert.deepEqual(classify('deleteItem', undefined, classOnNpc, {embeddedIndexing: true}), ['identity', 'names']);
+});
+test('non-item world documents and world sidebar folders never emit names or folder access', () => {
+  for (const type of ['Scene', 'JournalEntry', 'Macro', 'RollTable', 'Playlist', 'Cards']) {
+    const doc = {id: 'd1', uuid: `${type}.d1`, name: '中文文档'};
+    assert.deepEqual(classify(`create${type}`, undefined, doc), ['identity']);
+    assert.deepEqual(classify(`delete${type}`, undefined, doc), ['identity']);
+    assert.deepEqual(classify(`update${type}`, {name: '改名'}, doc), ['display']);
+    assert.deepEqual(classify(`update${type}`, {folder: 'folder1'}, doc), []);
+    assert.equal(classify(`update${type}`, undefined, doc).includes('names'), false);
+  }
+  const worldItem = {id: 'i1', uuid: 'Item.i1', type: 'spell', name: '火球术'};
+  assert.deepEqual(classify('updateItem', {folder: 'f1'}, worldItem), []);
+  const packItem = {id: 'i2', uuid: 'Compendium.pack.items.Item.i2', pack: 'pack.items', type: 'spell', name: '火球术'};
+  assert.deepEqual(classify('updateItem', {folder: 'f1'}, packItem), ['names']);
+
+  for (const folderType of ['Actor', 'Item', 'Scene', 'JournalEntry', 'Macro', 'RollTable', 'Playlist', 'Cards']) {
+    const worldFolder = {id: 'f1', type: folderType, name: '世界文件夹'};
+    assert.deepEqual(classify('createFolder', undefined, worldFolder), []);
+    assert.deepEqual(classify('updateFolder', {name: '改名'}, worldFolder), []);
+    assert.deepEqual(classify('deleteFolder', undefined, worldFolder), []);
+  }
+  const packItemFolder = {id: 'f2', type: 'Item', pack: 'pack.items', name: 'Items'};
+  assert.deepEqual(classify('createFolder', undefined, packItemFolder), ['names']);
+  assert.deepEqual(classify('updateFolder', {name: 'Items2'}, packItemFolder), ['names']);
+  assert.deepEqual(classify('deleteFolder', undefined, packItemFolder), ['names']);
+  const packActorFolder = {id: 'f3', type: 'Actor', pack: 'pack.monsters', name: 'Monsters'};
+  assert.deepEqual(classify('createFolder', undefined, packActorFolder), []);
+  const compendiumFolder = {id: 'f4', type: 'Compendium', name: 'Compendiums'};
+  assert.deepEqual(classify('createFolder', undefined, compendiumFolder), ['names', 'access']);
+  assert.deepEqual(classify('deleteFolder', undefined, compendiumFolder), ['names', 'access']);
+});

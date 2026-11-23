@@ -152,7 +152,8 @@ export class CatalogService {
     if (domains.has('sources')) domains.add('identity');
     if (domains.has('access') || domains.has('review') || domains.has('sources') || (domains.has('identity') && affectsNames)) domains.add('names');
     this.generation++;
-    for (const domain of ['sources', 'names', 'access', 'review']) if (changes.includes(domain)) this.revisions[domain]++;
+    for (const domain of ['sources', 'access', 'review']) if (changes.includes(domain)) this.revisions[domain]++;
+    if (changes.includes('names') || (domains.has('names') && domains.has('identity') && affectsNames)) this.revisions.names++;
     if (packs && ['identity', 'names', 'access', 'sources'].some(domain => domains.has(domain))) this.revisions.packs++;
     const indexChanged = index && ['identity', 'names', 'access', 'display'].some(domain => changes.includes(domain));
     if (indexChanged) {
