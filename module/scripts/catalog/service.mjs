@@ -1,9 +1,33 @@
-import {describeGroupingIndex, buildDescribedGroupingCatalog, calculateDescribedGrouping, canonicalUuid, groupingDiff, GROUP_RULE_VERSION} from './identity.mjs';
+import {describeGroupingIndexWithOwners, updateDescribedGroupingIndex, buildDescribedGroupingCatalog, calculateDescribedGrouping, canonicalUuid, groupingDiff, GROUP_RULE_VERSION} from './identity.mjs';
 import {prepareSourceEnvironment} from './source-resolution.mjs';
 import {emptyReview, readReview, mergeReviewSnapshot} from './state.mjs';
 import {buildNameSets, nameSetPairs, decisionEvidence, decisionCurrent, comparePair, compareRelationship, applyNameDecisions, comparisonFields} from './name-review.mjs';
 import {readRuleEvidence} from './rule-evidence.mjs';
 import {ALL_CHANGES, affects} from '../changes.mjs';
+
+function clonePlain(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const out = new Array(value.length);
+    for (let i = 0; i < value.length; i++) out[i] = clonePlain(value[i]);
+    return out;
+  }
+  if (value instanceof Map) {
+    const out = new Map();
+    for (const [k, v] of value) out.set(k, clonePlain(v));
+    return out;
+  }
+  if (value instanceof Set) {
+    const out = new Set();
+    for (const v of value) out.add(clonePlain(v));
+    return out;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return structuredClone(value);
+  const out = {};
+  for (const key in value) if (Object.hasOwn(value, key)) out[key] = clonePlain(value[key]);
+  return out;
+}
 
 export class CatalogError extends Error {
   constructor(code, message = code) { super(message); this.name = 'CatalogError'; this.code = code; this.source = 'truesight'; }
@@ -24,6 +48,7 @@ export class CatalogService {
     this.previews = new Map();
     this.waiters = new Set();
     this.serial = 0;
+    this.fullMetadataRequired = true;
     const value=load();
     try { this.state = readReview(value); }
     catch (error) { this.rejectReview(value, error); }
@@ -118,20 +143,25 @@ export class CatalogService {
     });
   }
 
-  invalidate(reason = 'index', changes = ALL_CHANGES, {defer = false, packs = true} = {}) {
+  invalidate(reason = 'index', changes = ALL_CHANGES, {defer = false, packs = true, index = true, affectsNames = true, incremental = false} = {}) {
     if (this.disposed || !changes.length) return;
     const domains = new Set(changes);
     // Names corroborate identity in risk previews, including candidates which
     // have not yet joined any applied group. Ordinary renames keep previews.
-    if (domains.has('names') && (this.state.active && (Object.values(this.state.active.groups).some(g => g.risk)||this.state.active.decisions.length>0) || [...this.previews.values()].some(p => p.options.includeRisk||p.decision))) domains.add('identity');
+    if (index && domains.has('names') && (this.state.active && (Object.values(this.state.active.groups).some(g => g.risk)||this.state.active.decisions.length>0) || [...this.previews.values()].some(p => p.options.includeRisk||p.decision))) domains.add('identity');
     if (domains.has('sources')) domains.add('identity');
-    if (['identity', 'access', 'review'].some(key => domains.has(key))) domains.add('names');
+    if (domains.has('access') || domains.has('review') || domains.has('sources') || (domains.has('identity') && affectsNames)) domains.add('names');
     this.generation++;
     for (const domain of ['sources', 'names', 'access', 'review']) if (changes.includes(domain)) this.revisions[domain]++;
     if (packs && ['identity', 'names', 'access', 'sources'].some(domain => domains.has(domain))) this.revisions.packs++;
-    const indexChanged = ['identity', 'names', 'access', 'display'].some(domain => changes.includes(domain));
-    if (indexChanged) this.revisions.index++;
-    this.currentCache = this.nameReviewCache = null;
+    const indexChanged = index && ['identity', 'names', 'access', 'display'].some(domain => changes.includes(domain));
+    if (indexChanged) {
+      this.revisions.index++;
+      if (!incremental) this.fullMetadataRequired = true;
+    }
+    if (indexChanged || domains.has('sources') || domains.has('review') || domains.has('access')) {
+      this.currentCache = this.nameReviewCache = null;
+    }
     if (affects({changes: [...domains]}, ['identity', 'access', 'review'])) this.previews.clear();
     const pending = this.pendingChange ?? {changes: new Set()};
     for (const domain of domains) pending.changes.add(domain);
@@ -170,9 +200,18 @@ export class CatalogService {
     // Injected sources without a revision are deliberately uncached. Runtime
     // revisions change on metadata, index replacement and visible projection.
     if (!metadata || index.revision === undefined || metadata.key !== index.revision || metadata.sources !== this.revisions.sources) {
-      const environment = prepareSourceEnvironment(this.environment());
-      this.metadataCache = {key: index.revision, sources: this.revisions.sources, environment,
-        described: describeGroupingIndex(index.results, environment)};
+      if (!fresh && metadata && index.revision !== undefined && metadata.sources === this.revisions.sources
+        && !this.fullMetadataRequired && !index.full && index.dirty instanceof Set) {
+        const updated = updateDescribedGroupingIndex(metadata.described, metadata.owners, index.results, metadata.environment, index.dirty);
+        this.metadataCache = {key: index.revision, sources: this.revisions.sources, environment: updated.environment,
+          owners: updated.owners, described: updated.entries};
+      } else {
+        const environment = prepareSourceEnvironment(this.environment());
+        const built = describeGroupingIndexWithOwners(index.results, environment);
+        this.metadataCache = {key: index.revision, sources: this.revisions.sources, environment: built.environment,
+          owners: built.owners, described: built.entries};
+      }
+      this.fullMetadataRequired = false;
       this.currentCache = null;
     }
     const {environment, described} = this.metadataCache;
@@ -189,8 +228,7 @@ export class CatalogService {
     const entries = new Map(), groups = new Map();
     // Construct a public DTO, never return a Quick Insert item, document,
     // search-result wrapper or the underlying persisted snapshot.
-    for (const entry of data.entries.values()) {
-      if (wanted && !wanted.has(entry.uuid)) continue;
+    const addEntry = entry => {
       const group = entry.key && this.state.active?.groups[entry.key];
       entries.set(entry.uuid, {
         uuid: entry.uuid, documentType: entry.documentType, key: entry.key, type: entry.result.item.subType,
@@ -202,18 +240,42 @@ export class CatalogService {
         names: [...entry.names], tags: [...entry.tags], srd: entry.srd,
         reason: group?.reason ?? entry.reason,
         evidence: {identifier: entry.id, level: entry.level, school: entry.school,
-          context: structuredClone(entry.context), source: entry.source, provider: structuredClone(entry.trace??null)}
+          context: clonePlain(entry.context), source: clonePlain(entry.source), provider: clonePlain(entry.trace??null)}
       });
       if (entry.key && !groups.has(entry.key)) groups.set(entry.key, {
         key: entry.key, kind: entry.kind, rules: entry.rules, reason: group.reason,
         risk: entry.risk, members: data.groups.get(entry.key).map(member => member.uuid)
       });
+    };
+    if (wanted && wanted.size < data.entries.size) {
+      for (const uuid of wanted) {
+        const entry = data.entries.get(uuid);
+        if (entry) addEntry(entry);
+        else entries.set(uuid, {uuid, key: null, status: 'not-indexed', warning: null, reason: 'outside-index'});
+      }
+    } else {
+      for (const entry of data.entries.values()) if (!wanted || wanted.has(entry.uuid)) addEntry(entry);
+      // Callers may query visible non-indexed items. These stay independent;
+      // absence is not an index/API failure and never implies an approved link.
+      for (const uuid of wanted ?? []) if (!entries.has(uuid)) entries.set(uuid,
+        {uuid, key: null, status: 'not-indexed', warning: null, reason: 'outside-index'});
     }
-    // Callers may query visible non-indexed items. These stay independent;
-    // absence is not an index/API failure and never implies an approved link.
-    for (const uuid of wanted ?? []) if (!entries.has(uuid)) entries.set(uuid,
-      {uuid, key: null, status: 'not-indexed', warning: null, reason: 'outside-index'});
-    return structuredClone({...status, changed: data.changed, ...(this.canManage() ? {excludedCount: this.state.excluded.filter(id => data.entries.has(id)).length} : {}), entries, groups});
+    return {...clonePlain(status), changed: data.changed, ...(this.canManage() ? {excludedCount: this.state.excluded.filter(id => data.entries.has(id)).length} : {}), entries, groups};
+  }
+
+  readMembership(uuids) {
+    const {status, data} = this.current();
+    const entries = new Map();
+    if (uuids) {
+      for (const raw of uuids) {
+        const uuid = canonicalUuid(raw);
+        const entry = data.entries.get(uuid);
+        entries.set(uuid, entry ? {key: entry.key, rules: entry.rules} : {key: null, rules: null});
+      }
+    } else {
+      for (const [uuid, entry] of data.entries) entries.set(uuid, {key: entry.key, rules: entry.rules});
+    }
+    return {apiVersion: status.apiVersion, status: status.status, entries};
   }
 
   getMember(uuid) { return this.read([uuid]).entries.get(canonicalUuid(uuid)); }

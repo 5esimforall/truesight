@@ -8,6 +8,10 @@ function current() {
   if (!service) throw new CatalogError('not-ready', 'Truesight has not initialized');
   return service;
 }
+export function readMembership(uuids) {
+  const active = current();
+  return typeof active.readMembership === 'function' ? active.readMembership(uuids) : active.read(uuids);
+}
 export const catalog = Object.freeze({
   apiVersion: 1,
   affects,

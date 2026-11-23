@@ -64,3 +64,43 @@ test('an obsolete failed build does not drop the queued latest request', async (
   const first=queue.request();await tick();const next=queue.request();gate.reject(Error('old failure'));
   await Promise.all([first,next]);assert.equal(builds,2);assert.equal(published,1);
 });
+
+test('delayed requests coalesce bursts, preempt cleanly for immediate requests, and cancel on stop', async () => {
+  let builds = 0, invalidations = 0, lastOption;
+  const queue = createRefreshQueue({
+    invalidate: opts => { invalidations++; lastOption = opts; },
+    build: async (_isCurrent, opts) => { builds++; lastOption = opts; }
+  });
+  const burst = Array.from({length: 10}, (_, i) => queue.request({delay: 25, seq: i}));
+  assert.equal(invalidations, 10);
+  assert.equal(builds, 0);
+  await Promise.all(burst);
+  assert.equal(builds, 1);
+  assert.equal(lastOption.seq, 9);
+
+  // Immediate/retract request preempts a pending delayed build without double-running
+  const delayed = queue.request({delay: 40, tag: 'delayed'});
+  const immediate = queue.request({retract: true, tag: 'retract'});
+  await Promise.all([delayed, immediate]);
+  assert.equal(builds, 2);
+  assert.equal(lastOption.tag, 'retract');
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(builds, 2);
+
+  // stop() cancels pending delayed work and resolves waiters
+  const stopped = queue.request({delay: 40, tag: 'stopped'});
+  queue.stop();
+  await stopped;
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(builds, 2);
+
+  // Failed delayed build rejects and releases the queue
+  let fail = true;
+  const failingQueue = createRefreshQueue({
+    invalidate: () => {},
+    build: async () => { if (fail) throw Error('delayed offline'); }
+  });
+  await assert.rejects(failingQueue.request({delay: 10}), /delayed offline/);
+  fail = false;
+  await failingQueue.request({delay: 10});
+});

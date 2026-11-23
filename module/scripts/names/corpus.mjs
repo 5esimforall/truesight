@@ -16,6 +16,67 @@ function rowActorType(row) {
   return typeof actor.type === 'string' && actor.type ? actor.type : undefined;
 }
 
+const HAN = /\p{Script=Han}/u;
+
+function clonePlain(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const out = new Array(value.length);
+    for (let i = 0; i < value.length; i++) out[i] = clonePlain(value[i]);
+    return out;
+  }
+  if (value instanceof Map) {
+    const out = new Map();
+    for (const [k, v] of value) out.set(k, clonePlain(v));
+    return out;
+  }
+  if (value instanceof Set) {
+    const out = new Set();
+    for (const v of value) out.add(clonePlain(v));
+    return out;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return structuredClone(value);
+  const out = {};
+  for (const key in value) if (Object.hasOwn(value, key)) out[key] = clonePlain(value[key]);
+  return out;
+}
+
+function cloneCorpusData(data) {
+  if (!data || typeof data !== 'object' || !(data.indexes instanceof Map) || !(data.sources instanceof Map)) {
+    return clonePlain(data);
+  }
+  const indexes = new Map();
+  for (const [packId, index] of data.indexes) {
+    if (index instanceof Map) {
+      const copy = new Map();
+      for (const [id, row] of index) copy.set(id, clonePlain(row));
+      indexes.set(packId, copy);
+    } else {
+      indexes.set(packId, clonePlain(index));
+    }
+  }
+  const sources = new Map();
+  for (const [packId, src] of data.sources) {
+    if (!src || typeof src !== 'object') { sources.set(packId, clonePlain(src)); continue; }
+    const copy = {};
+    for (const key in src) {
+      if (!Object.hasOwn(src, key)) continue;
+      if (key === 'index' && src.index === data.indexes.get(packId)) copy.index = indexes.get(packId);
+      else copy[key] = clonePlain(src[key]);
+    }
+    sources.set(packId, copy);
+  }
+  const out = {};
+  for (const key in data) {
+    if (!Object.hasOwn(data, key) || key === 'catalogFor') continue;
+    if (key === 'indexes') out.indexes = indexes;
+    else if (key === 'sources') out.sources = sources;
+    else out[key] = clonePlain(data[key]);
+  }
+  return out;
+}
+
 // Copy only requested metadata, never retain live Documents or mutable pack
 // indexes. Each consumer receives its own copy, including nested flags.
 function metadata(row, fields) {
@@ -27,7 +88,7 @@ function metadata(row, fields) {
     if (value === undefined) continue;
     let target = result;
     for (const key of keys.slice(0, -1)) target = target[key] ??= {};
-    target[keys.at(-1)] = structuredClone(value);
+    target[keys.at(-1)] = typeof value === 'object' && value !== null ? clonePlain(value) : value;
   }
   const actorType = rowActorType(row);
   if (actorType) result.actorType = actorType;
@@ -77,9 +138,15 @@ export async function readCorpus({packs, loadTitleIndex, loadGrouping, localItem
 }
 
 function* visibleLocalItems(game) {
-  for (const item of game.items?.values() ?? []) if (item.visible) yield item;
+  for (const item of game.items?.values() ?? []) {
+    if (item.visible && typeof item.name === 'string' && HAN.test(item.name)) yield item;
+  }
   for (const actor of game.actors?.values() ?? []) {
-    if (actor.testUserPermission(game.user, 'OBSERVER')) yield* actor.items.values();
+    if (actor.testUserPermission(game.user, 'OBSERVER')) {
+      for (const item of actor.items?.values?.() ?? []) {
+        if (typeof item.name === 'string' && HAN.test(item.name)) yield item;
+      }
+    }
   }
 }
 
@@ -99,7 +166,7 @@ export function createCorpusLoader({key, accessKey, read}) {
       if (cached?.token === current) {
         const {catalogFor, ...data} = cached.data, evidence = evidenceKey(), access = accessToken();
         return {
-          ...structuredClone(data), catalogFor,
+          ...cloneCorpusData(data), catalogFor,
           isCurrent: () => evidenceKey() === evidence,
           isAccessCurrent: () => accessToken() === access
         };
@@ -156,7 +223,7 @@ function contextKey(game) {
   // Review changes alter catalogFor's live projection, not pack metadata.
   return [
     ...accessContextKey(game),
-    status.revisions?.index, status.revisions?.names, status.revisions?.sources, status.revisions?.packs,
+    status.revisions?.review, status.revisions?.names, status.revisions?.sources, status.revisions?.packs,
     game.i18n?.lang,
     Boolean(game.modules.get(TRANSLATION_MODULE)?.active),
     [...visibleLocalItems(game)].map(item => [

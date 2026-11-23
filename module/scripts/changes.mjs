@@ -1,5 +1,12 @@
+import {DOCUMENT_TYPES} from './catalog/item-identity.mjs';
+
 /** Public notifications describe affected domains, never changed document IDs. */
 export const ALL_CHANGES = Object.freeze(['identity', 'names', 'access', 'sources', 'review', 'display']);
+export const INDEXED_DOCUMENT_TYPES = Object.freeze(['Item', ...DOCUMENT_TYPES]);
+const INDEXED_SET = new Set(INDEXED_DOCUMENT_TYPES);
+const HAN = /\p{Script=Han}/u;
+const OWNER_ITEM_TYPES = new Set(['class', 'subclass', 'race', 'background']);
+
 export function affects(change, domains) {
   if (!Array.isArray(change?.changes)) throw new TypeError('Expected a domain-tagged change notification');
   return domains.some(domain => change.changes.includes(domain));
@@ -12,9 +19,45 @@ function paths(value, prefix = '') {
   return entries.flatMap(([key, child]) => paths(child, [prefix, key.replace(/(^|\.)-=/g, '$1')].filter(Boolean).join('.')));
 }
 const overlaps = (a, b) => a === b || a.startsWith(b + '.') || b.startsWith(a + '.');
+const eventDocumentType = event => {
+  const match = event.match(/^(?:create|update|delete)(.+)$/);
+  return match ? match[1] : null;
+};
+const isOwnerItem = document => OWNER_ITEM_TYPES.has(document?.type);
+const hasHanName = item => typeof item?.name === 'string' && HAN.test(item.name);
 
-export function isLocalDocumentChange(event, document) {
-  if (!/^(?:create|update|delete)(?:Item|Actor|JournalEntry|JournalEntryPage|Macro|Scene|RollTable|Playlist|Cards)$/.test(event)) return false;
+function actorHasHanItems(actor) {
+  if (actor?.items == null) return null;
+  const items = typeof actor.items.values === 'function' ? actor.items.values()
+    : Array.isArray(actor.items) ? actor.items : null;
+  if (!items) return null;
+  for (const item of items) if (hasHanName(item)) return true;
+  return false;
+}
+
+export function isTokenDocument(document) {
+  if (!document || typeof document !== 'object') return false;
+  if (document.isToken === true || document.parent?.isToken === true
+    || document.parent?.documentName === 'Token' || document.parent?.parent?.documentName === 'Token') return true;
+  return typeof document.uuid === 'string' && /^Scene\.[^.]+\.Token\./.test(document.uuid);
+}
+
+export function isEmbeddedActorItem(event, document) {
+  if (!/^(?:create|update|delete)Item$/.test(event)) return false;
+  if (!document || typeof document !== 'object' || document.pack || document.parent?.pack) return false;
+  if (typeof document.uuid === 'string' && /^Actor\.[^.]+\.Item\./.test(document.uuid)) return true;
+  return Boolean(document.parent && (document.parent.documentName === 'Actor'
+    || document.parent.items !== undefined
+    || (typeof document.parent.uuid === 'string' && document.parent.uuid.startsWith('Actor.'))));
+}
+
+function isEmbeddedJournalPage(event, document) {
+  return /^(?:create|update|delete)JournalEntryPage$/.test(event) && !document?.pack && !document?.parent?.pack;
+}
+
+export function isLocalDocumentChange(event, document, {indexedTypes} = {}) {
+  const type = eventDocumentType(event);
+  if (!type || (!INDEXED_SET.has(type) && !indexedTypes?.has(type))) return false;
   if (!document || typeof document !== 'object' || document.pack) return false;
   if (typeof document.uuid === 'string' && document.uuid.startsWith('Compendium.')) return false;
   if (document.parent?.pack) return false;
@@ -23,7 +66,7 @@ export function isLocalDocumentChange(event, document) {
 
 /** Accept Foundry's nested, dotted and deletion updates. Missing deltas are
  * conservatively relevant; known unrelated fields never invalidate evidence. */
-export function classifyChange(event, document, delta, {userId} = {}) {
+export function classifyChange(event, document, delta, {userId, embeddedIndexing = false, indexedTypes} = {}) {
   if (event === 'updateSetting') {
     const key = document?.key ?? delta?.key;
     if (!key) return [...ALL_CHANGES];
@@ -34,10 +77,36 @@ export function classifyChange(event, document, delta, {userId} = {}) {
       || /^(babele|dnd-simplified-chinese-babele-patch)\./.test(key)) return ['names'];
     return [];
   }
+  const special = /^(?:create|update|delete)(?:Compendium|Folder)$/.test(event) || event === 'updateUser';
+  if (!special) {
+    const type = eventDocumentType(event);
+    if (!type || (!INDEXED_SET.has(type) && !indexedTypes?.has(type))) return [];
+    if (isTokenDocument(document)) return [];
+    if (isEmbeddedJournalPage(event, document) && !embeddedIndexing) return [];
+    if (isEmbeddedActorItem(event, document) && !embeddedIndexing) {
+      if (!event.startsWith('update')) {
+        return typeof document.name === 'string' && !HAN.test(document.name) ? [] : ['names'];
+      }
+      if (!delta || typeof delta !== 'object' || Array.isArray(delta)) return ['names'];
+      const fields = paths(delta).filter(path => path && path !== '_id');
+      const has = (...keys) => fields.some(path => keys.some(key => overlaps(path, key)));
+      if (!has('name', 'originalName', 'flags.babele', 'flags.chris-premades.info', 'flags.gambits-premades.gpsUuid',
+        'type', 'system.identifier', 'system.source', 'system.type')) return [];
+      if (!has('name') && typeof document.name === 'string' && !HAN.test(document.name)) return [];
+      return ['names'];
+    }
+  }
   if (!event.startsWith('update')) {
     if (event === 'createCompendium' || event === 'deleteCompendium') return ['identity', 'names', 'access'];
     if (event === 'createFolder' || event === 'deleteFolder') return ['names', 'access'];
-    if (/^(?:create|delete)(?:Item|Actor)$/.test(event)) return ['identity', 'names'];
+    if (event === 'createItem' || event === 'deleteItem') {
+      if (isLocalDocumentChange(event, document, {indexedTypes}) && typeof document?.name === 'string'
+        && !HAN.test(document.name) && !isOwnerItem(document)) return ['identity'];
+      return ['identity', 'names'];
+    }
+    if (event === 'createActor' || event === 'deleteActor') {
+      return actorHasHanItems(document) === false ? ['identity'] : ['identity', 'names'];
+    }
     return ['identity'];
   }
   if (!delta || typeof delta !== 'object' || Array.isArray(delta)) return [...ALL_CHANGES];
@@ -55,7 +124,7 @@ export function classifyChange(event, document, delta, {userId} = {}) {
   }
   if (has('type', 'system.identifier', 'system.source', 'system.level', 'system.school', 'system.type', 'system.classIdentifier', 'system.requirements', 'system.prerequisites',
     'system.advancement', 'system.rarity', 'system.magicalBonus', '_stats.compendiumSource', 'items')) result.add('identity');
-  if (event === 'updateItem' && ['class', 'subclass', 'race', 'background'].includes(document?.type)
+  if (event === 'updateItem' && isOwnerItem(document)
     && has('name', 'originalName', 'flags.babele')) result.add('identity');
   if (has('name', 'originalName', 'flags.babele', 'flags.chris-premades.info', 'flags.gambits-premades.gpsUuid', 'folderId')) {
     result.add(event === 'updateActor' && !has('items') ? 'display' : 'names');

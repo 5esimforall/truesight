@@ -1,10 +1,10 @@
-import {catalog} from '../catalog/api.mjs';
+import {catalog, readMembership} from '../catalog/api.mjs';
 
 // Membership is owned by Truesight; consumers never supply an applied snapshot.
 export async function loadGrouping() {
   await catalog.whenReady();
   return items => {
-    const result = catalog.read(items.map(item => item.uuid));
+    const result = readMembership(items.map(item => item.uuid));
     if (result.apiVersion !== 1 || !['ready', 'unreviewed'].includes(result.status)) throw new Error('Incompatible or unavailable Truesight catalog');
     return result.entries;
   };

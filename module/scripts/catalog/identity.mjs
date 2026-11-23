@@ -87,50 +87,92 @@ function describe(result, environment) {
     origin:text(indexed._stats?.compendiumSource ?? item._stats?.compendiumSource),
     base,suffixBook,names:[item.name,name].filter(Boolean),tags:automated?["automation"]:[],srd:isSrdSource(item,environment),key:null,risk:null,kind:null};
 }
-export function describeGroupingIndex(results, environment={}) {
-  environment=prepareSourceEnvironment(environment);
-  const entries=new Map(results.map(result=>{const entry=describe(result,environment);return [entry.uuid,entry];}));
-  const owners=prepareOwners(entries);
-  for (const entry of entries.values()) {
-    entry.kind=entry.spell?'spell':entry.documentType==='Item'?entry.type:'document';
-    entry.context=null;entry.reason=null;entry.groupReason='identifier';
-    if (entry.spell) continue;
-    const knownDocument=entry.documentType==='Item'||DOCUMENT_TYPES.includes(entry.documentType)
-      || Object.hasOwn(environment.system?.documentTypes??{},entry.documentType);
-    const isItem=entry.documentType==='Item'&&(!environment.system?.id||environment.system.id==='dnd5e');
-    const identity=isItem?(entry.externalContext?{context:entry.externalContext}:itemContext(entry,owners,environment)):{context:{documentType:entry.documentType,type:entry.type??null}};
-    entry.warning=entry.warning||(!knownDocument||identity.warning==='unknown-type'?'unknown-type':isItem&&!entry.rules?'rules':isItem&&!entry.id?'identifier':identity.warning??null);
-    entry.context=identity.context??null;
-    const origin=canonicalUuid({uuid:entry.origin,documentType:entry.documentType});
-    const originParts=origin.split('.');
-    const validOrigin=originParts.length===5&&originParts[0]==='Compendium'&&originParts[3]===entry.documentType;
-    if (!isItem) {
-      entry.kind='document';
-      const uuidParts=entry.uuid.split('.');
-      const selfOrigin=uuidParts.length===5&&uuidParts[0]==='Compendium'&&uuidParts[3]===entry.documentType?entry.uuid:null;
-      entry.groupReason='origin';
-      entry.context={...entry.context,origin:validOrigin?origin:selfOrigin};
-      if (!validOrigin&&!selfOrigin) entry.reason='origin';
-    } else {
-      entry.warning=entry.warning||(!entry.rules?'rules':!entry.id?'identifier':null);
-      // Provenance can supply otherwise missing ownership, never resolve an
-      // explicit conflict or erase the item's type/generation constraints.
-      if (entry.warning==='owner-context'&&validOrigin&&entry.rules&&entry.id) {
-        entry.warning=null;entry.groupReason='origin';
-        entry.context={origin,category:text(entry.system.type?.value),subtype:text(entry.system.type?.subtype),
-          requirements:nameKey(entry.system.requirements),level:entry.system.prerequisites?.level??null,
-          prerequisites:[...(entry.system.prerequisites?.items??[])].sort(),classIdentifier:text(entry.system.classIdentifier)};
-      }
+const isOwnerEntry = entry => entry?.documentType === 'Item' && ['class', 'subclass', 'race', 'background'].includes(entry.type);
+
+function finalizeEntry(entry, owners, environment) {
+  entry.kind=entry.spell?'spell':entry.documentType==='Item'?entry.type:'document';
+  entry.context=null;entry.reason=null;entry.groupReason='identifier';
+  if (entry.spell) return;
+  const knownDocument=entry.documentType==='Item'||DOCUMENT_TYPES.includes(entry.documentType)
+    || Object.hasOwn(environment.system?.documentTypes??{},entry.documentType);
+  const isItem=entry.documentType==='Item'&&(!environment.system?.id||environment.system.id==='dnd5e');
+  const identity=isItem?(entry.externalContext?{context:entry.externalContext}:itemContext(entry,owners,environment)):{context:{documentType:entry.documentType,type:entry.type??null}};
+  entry.warning=entry.warning||(!knownDocument||identity.warning==='unknown-type'?'unknown-type':isItem&&!entry.rules?'rules':isItem&&!entry.id?'identifier':identity.warning??null);
+  entry.context=identity.context??null;
+  const origin=canonicalUuid({uuid:entry.origin,documentType:entry.documentType});
+  const originParts=origin.split('.');
+  const validOrigin=originParts.length===5&&originParts[0]==='Compendium'&&originParts[3]===entry.documentType;
+  if (!isItem) {
+    entry.kind='document';
+    const uuidParts=entry.uuid.split('.');
+    const selfOrigin=uuidParts.length===5&&uuidParts[0]==='Compendium'&&uuidParts[3]===entry.documentType?entry.uuid:null;
+    entry.groupReason='origin';
+    entry.context={...entry.context,origin:validOrigin?origin:selfOrigin};
+    if (!validOrigin&&!selfOrigin) entry.reason='origin';
+  } else {
+    entry.warning=entry.warning||(!entry.rules?'rules':!entry.id?'identifier':null);
+    // Provenance can supply otherwise missing ownership, never resolve an
+    // explicit conflict or erase the item's type/generation constraints.
+    if (entry.warning==='owner-context'&&validOrigin&&entry.rules&&entry.id) {
+      entry.warning=null;entry.groupReason='origin';
+      entry.context={origin,category:text(entry.system.type?.value),subtype:text(entry.system.type?.subtype),
+        requirements:nameKey(entry.system.requirements),level:entry.system.prerequisites?.level??null,
+        prerequisites:[...(entry.system.prerequisites?.items??[])].sort(),classIdentifier:text(entry.system.classIdentifier)};
     }
-    entry.fingerprint=JSON.stringify(['identity-v2',entry.documentType,entry.type,entry.id,entry.rules,entry.context,entry.warning]);
   }
-  for(const entry of entries.values()) if(entry.fingerprint.length>2000) {
+  entry.fingerprint=JSON.stringify(['identity-v2',entry.documentType,entry.type,entry.id,entry.rules,entry.context,entry.warning]);
+  if(entry.fingerprint.length>2000) {
     entry.warning='context-size';entry.context=null;
     // Oversized metadata never participates in grouping. Bound its diagnostic
     // record without using a lossy signature to establish identity.
     entry.fingerprint=JSON.stringify(['context-size',entry.fingerprint.length,entry.fingerprint.slice(0,1000)]);
   }
-  return entries;
+}
+
+export function describeGroupingIndexWithOwners(results, environment={}) {
+  environment=prepareSourceEnvironment(environment);
+  const entries=new Map(results.map(result=>{const entry=describe(result,environment);return [entry.uuid,entry];}));
+  const owners=prepareOwners(entries);
+  for (const entry of entries.values()) finalizeEntry(entry, owners, environment);
+  return {entries, owners, environment};
+}
+
+export function describeGroupingIndex(results, environment={}) {
+  return describeGroupingIndexWithOwners(results, environment).entries;
+}
+
+export function updateDescribedGroupingIndex(previousDescribed, previousOwners, results, environment, dirtyUuids) {
+  if (!previousDescribed || !previousOwners || !(dirtyUuids instanceof Set)) {
+    return describeGroupingIndexWithOwners(results, environment);
+  }
+  environment = prepareSourceEnvironment(environment);
+  const nextEntries = new Map();
+  const toFinalize = [];
+  let ownersChanged = false;
+  for (const result of results) {
+    const uuid = canonicalUuid(result.item);
+    const prev = previousDescribed.get(uuid);
+    if (prev && !dirtyUuids.has(uuid) && prev.result.item === result.item) {
+      nextEntries.set(uuid, prev.result === result ? prev : {...prev, result});
+      continue;
+    }
+    if (prev && isOwnerEntry(prev)) { ownersChanged = true; break; }
+    environment.sourceCache?.delete(result.item);
+    const entry = describe(result, environment);
+    if (isOwnerEntry(entry)) { ownersChanged = true; break; }
+    nextEntries.set(uuid, entry);
+    toFinalize.push(entry);
+  }
+  if (!ownersChanged) {
+    for (const [uuid, prev] of previousDescribed) {
+      if (!nextEntries.has(uuid) && isOwnerEntry(prev)) { ownersChanged = true; break; }
+    }
+  }
+  if (ownersChanged) {
+    return describeGroupingIndexWithOwners(results, {...environment, sourceCache: new WeakMap()});
+  }
+  for (const entry of toFinalize) finalizeEntry(entry, previousOwners, environment);
+  return {entries: nextEntries, owners: previousOwners, environment};
 }
 function addTo(map,key,value) {if(!map.has(key))map.set(key,[]);map.get(key).push(value);}
 

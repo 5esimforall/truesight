@@ -389,3 +389,105 @@ test('exclusion apply revalidates evidence, access, revisions, publishing author
     assert.deepEqual(s.state,before);
   }
 });
+
+test('runtime filters non-indexed types, token docs, blank actors and embedded Han items without unnecessary scans', async () => {
+  const f = runtimeFixture();
+  f.qi.hasIndex = true;
+  let scans = 0;
+  f.qi.search = () => { scans++; return f.rows; };
+  f.game.system.documentTypes = {Item: {}, Actor: {}, ActiveEffect: {}, ChatMessage: {}, Combatant: {}};
+  const config = {Item: {compendiumIndexFields: []}, Actor: {compendiumIndexFields: []}};
+  const settings = new Map([['quick-insert.gmOnly', false], ['quick-insert.embeddedIndexing', false]]);
+  f.game.settings.get = (id, key) => settings.get(id + '.' + key);
+  const service = createRuntime({
+    game: f.game, hooks: f.hooks, config, quickInsert: () => f.qi, parser: () => null,
+    publisher: {status: () => ({canPublish: true}), start(){}, begin(){}, end(){}, destroy(){}}
+  });
+  const events = [];
+  f.hooks.on('truesightChanged', change => events.push(change));
+  service.read();
+  assert.equal(scans, 1);
+  const preview = service.preview({includeRisk: true});
+  const baseRevs = {...service.getStatus().revisions};
+
+  f.hooks.callAll('createActiveEffect', {id: 'ef1'}, {});
+  f.hooks.callAll('deleteActiveEffect', {id: 'ef1'}, {});
+  f.hooks.callAll('createChatMessage', {id: 'cm1'}, {});
+  f.hooks.callAll('createItem', {id: 'ti1', isToken: true, name: '狂暴'}, {});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(events.length, 0);
+  assert.equal(scans, 1);
+  assert.deepEqual(service.getStatus().revisions, baseRevs);
+  assert.ok(service.previews.has(preview.id));
+
+  // Blank actor notifies identity only, not names or packs
+  f.hooks.callAll('createActor', {id: 'a1', uuid: 'Actor.a1', items: new Map()}, {});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0].changes, ['identity']);
+  assert.equal(service.getStatus().revisions.packs, baseRevs.packs);
+
+  // Embedded Han item notifies names only without touching index, packs, metadataCache or previews
+  const previewBeforeEmbedded = service.preview({includeRisk: true});
+  const cachedMeta = service.metadataCache;
+  const beforeEmbeddedScans = scans;
+  const beforeIndexRev = service.getStatus().revisions.index;
+  f.hooks.callAll('createItem', {id: 'i1', uuid: 'Actor.a1.Item.i1', name: '狂暴', parent: {documentName: 'Actor', id: 'a1'}}, {});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(events.length, 2);
+  assert.deepEqual(events[1].changes, ['names']);
+  assert.equal(service.getStatus().revisions.index, beforeIndexRev);
+  assert.equal(service.getStatus().revisions.packs, baseRevs.packs);
+  assert.ok(service.previews.has(previewBeforeEmbedded.id));
+  service.read();
+  assert.equal(service.metadataCache, cachedMeta);
+  assert.equal(scans, beforeEmbeddedScans);
+  service.destroy();
+});
+
+test('incremental describeGroupingIndex reuses untouched entries, detects owner changes, and readMembership stays lightweight', async () => {
+  const f = runtimeFixture();
+  f.qi.hasIndex = true;
+  const fighter = {item: {uuid: 'Item.fighter', package: undefined, name: '战士 Fighter', documentType: 'Item', subType: 'class',
+    system: {identifier: 'fighter', source: {book: 'PHB', rules: '2014'}}}};
+  const feat = {item: {uuid: 'Item.secondwind', package: undefined, name: '回气 Second Wind', documentType: 'Item', subType: 'feat',
+    system: {identifier: 'second-wind', type: {value: 'class'}, requirements: 'Fighter', source: {book: 'PHB', rules: '2014'}}}};
+  f.rows.push(fighter, feat);
+  f.game.items.set('fighter', {...fighter.item, visible: true});
+  f.game.items.set('secondwind', {...feat.item, visible: true});
+
+  const before = f.service.read();
+  const cachedFighter = f.service.metadataCache.described.get('Item.fighter');
+  const cachedFeat = f.service.metadataCache.described.get('Item.secondwind');
+
+  // Mutate one non-owner spell and notify with its document UUID
+  f.rows[0].item.name = 'Updated Spell';
+  f.hooks.callAll('updateItem', f.rows[0].item, {name: 'Updated Spell'});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const afterNonOwner = f.service.read();
+  assert.equal(afterNonOwner.entries.get(f.rows[0].item.uuid).names[0], 'Updated Spell');
+  assert.equal(f.service.metadataCache.described.get('Item.fighter'), cachedFighter);
+  assert.equal(f.service.metadataCache.described.get('Item.secondwind'), cachedFeat);
+
+  // read() returns deeply detached copies
+  afterNonOwner.entries.get(f.rows[0].item.uuid).evidence.source.book = 'CORRUPTED';
+  assert.notEqual(f.service.getMember(f.rows[0].item.uuid).evidence.source.book, 'CORRUPTED');
+
+  // readMembership matches read() keys and rules
+  const mem = f.service.readMembership([f.rows[0].item.uuid, 'Item.missing']);
+  assert.equal(mem.entries.get(f.rows[0].item.uuid).rules, afterNonOwner.entries.get(f.rows[0].item.uuid).rules);
+  assert.equal(mem.entries.get('Item.missing').key, null);
+
+  // Adding or modifying an owner triggers full owner recalculation so dependent feats update
+  const newClass = {item: {uuid: 'Item.barbarian', package: undefined, name: '野蛮人 Barbarian', documentType: 'Item', subType: 'class',
+    system: {identifier: 'barbarian', source: {book: 'PHB', rules: '2014'}}}};
+  f.rows.push(newClass);
+  f.game.items.set('barbarian', {...newClass.item, visible: true});
+  f.hooks.callAll('createItem', f.game.items.get('barbarian'), {});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const afterOwner = f.service.read();
+  assert.ok(afterOwner.entries.has('Item.barbarian'));
+  assert.notEqual(f.service.metadataCache.described.get('Item.secondwind'), cachedFeat);
+  assert.equal(before.entries.has('Item.barbarian'), false);
+  f.service.destroy();
+});
