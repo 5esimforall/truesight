@@ -4,6 +4,7 @@ import {IDENTITY_FIELDS, DOCUMENT_TYPES, validIdentifier, prepareOwners, itemCon
 import {nameEvidence, decisionCurrent} from './name-review.mjs';
 
 // Metadata only: never load documents, descriptions, activities or effects.
+/** @type {readonly string[]} */
 export const GROUP_INDEX_FIELDS = Object.freeze(["originalName", "flags.babele.originalName", "flags.chris-premades.info.identifier", "flags.gambits-premades.gpsUuid", ...IDENTITY_FIELDS]);
 export const GROUP_RULE_VERSION = 3;
 const text = value => typeof value === "string" ? value.trim() : "";
@@ -12,6 +13,10 @@ const nameKey = value => text(value).normalize("NFKC").toLowerCase().replace(/â€
 const slug = value => nameKey(value).replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
 const identifier = validIdentifier;
 // Current Quick Insert compendium results omit the document type segment.
+/**
+ * @param {import('../../../types/api-v1.d.ts').CanonicalUuidInput} item
+ * @returns {string}
+ */
 export function canonicalUuid(item) {
   const uuid = text(typeof item === "string" ? item : item?.uuid);
   const type = typeof item === "string" ? "Item" : item?.documentType;

@@ -3,6 +3,11 @@ import {effectiveActorType, isNonCharacterActor} from '../changes.mjs';
 import {GROUP_FIELDS, loadGrouping} from './groups.mjs';
 import {TRANSLATION_MODULE} from './translations.mjs';
 
+/**
+ * @param {unknown} error
+ * @param {string | null} [source]
+ * @returns {import('../../../types/api-v1.d.ts').SourceErrorReport}
+ */
 export function sourceError(error, source = error?.source ?? null) {
   return {status: 'source-error', source, detail: String(error?.cause ?? error)};
 }
@@ -121,6 +126,10 @@ async function readPackIndexes(packs, fields = []) {
   return {indexes, sources, visibleIds: visible.map(([id]) => id), requested};
 }
 
+/**
+ * @param {import('../../../types/api-v1.d.ts').ReadCorpusOptions} options
+ * @returns {Promise<import('../../../types/api-v1.d.ts').RawCorpusData>}
+ */
 export async function readCorpus({packs, loadTitleIndex, loadGrouping, localItems = [], fields = []}) {
   let catalogFor;
   try {
@@ -237,6 +246,10 @@ async function fetchTitleIndex(client) {
   if (!response.ok) throw Object.assign(new Error('HTTP ' + response.status), {source: TRANSLATION_MODULE});
   return response.json();
 }
+/**
+ * @param {import('../../../types/api-v1.d.ts').LoadCorpusOptions} [options]
+ * @returns {Promise<import('../../../types/api-v1.d.ts').CorpusSnapshot>}
+ */
 export function loadCorpus(options = {}) {
   const client = globalThis.game;
   let load = loaders.get(client);

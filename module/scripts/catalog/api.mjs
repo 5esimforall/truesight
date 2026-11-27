@@ -1,18 +1,34 @@
+// @ts-check
+/** @typedef {import('../../../types/api-v1.d.ts').CanonicalUuidInput} CanonicalUuidInput */
+/** @typedef {import('../../../types/api-v1.d.ts').CatalogMembershipResult} CatalogMembershipResult */
+/** @typedef {import('../../../types/api-v1.d.ts').OpenReviewOptions} OpenReviewOptions */
+/** @typedef {import('../../../types/api-v1.d.ts').TruesightCatalogApi} TruesightCatalogApi */
 import {GROUP_RULE_VERSION} from './identity.mjs';
 import {affects} from '../changes.mjs';
 import {CatalogError} from './service.mjs';
 
-let service, openReview;
+/** @type {any} */
+let service;
+/** @type {(options?: OpenReviewOptions) => unknown} */
+let openReview;
+/**
+ * @param {any} value
+ * @param {(options?: OpenReviewOptions) => unknown} open
+ */
 export function connectCatalog(value, open) { service = value; openReview = open; }
 function current() {
   if (!service) throw new CatalogError('not-ready', 'Truesight has not initialized');
   return service;
 }
+/**
+ * @param {readonly CanonicalUuidInput[] | null} [uuids]
+ * @returns {CatalogMembershipResult}
+ */
 export function readMembership(uuids) {
   const active = current();
   return typeof active.readMembership === 'function' ? active.readMembership(uuids) : active.read(uuids);
 }
-export const catalog = Object.freeze({
+export const catalog = Object.freeze(/** @type {TruesightCatalogApi} */ ({
   apiVersion: 1,
   affects,
   getStatus: () => service?.getStatus() ?? {apiVersion: 1, ruleVersion: GROUP_RULE_VERSION, revision: 0, generation: 0, status: 'not-ready'},
@@ -32,4 +48,4 @@ export const catalog = Object.freeze({
   registerPublications: (id, records) => current().registerPublications(id, records),
   unregisterPublications: id => current().unregisterPublications(id),
   sourceEnvironment: () => current().environment()
-});
+}));

@@ -19,15 +19,16 @@ projects/
 
 ## 开发与验证
 
-使用 Node.js 22 或以上版本，无需安装 npm 依赖。打包与发行测试使用系统 `zip`、`unzip`。
+使用 Node.js 22 或以上版本。`npm test` 与 `npm run package` 无需安装 npm 依赖；`npm run check`（含 `npm run typecheck`）需要通过 `npm ci` 安装开发依赖 `typescript`。打包与发行测试使用系统 `zip`、`unzip`。
 
 ```sh
+npm ci
 npm test
 npm run check
 npm run package
 ```
 
-基座测试和打包不依赖同级消费者项目。公共 API 变更后，在 Slow Insert 和中文适配项目分别执行测试与检查。消费者测试使用同级基座源码，Foundry 运行时仍使用安装后的模块路径及公共 API。
+基座测试和打包不依赖同级消费者项目。`types/` 保存供 `tsc --noEmit` 检查的 `.d.ts` 类型声明，位于 `module/` 之外且不进入发行包。公共 API 变更后，在 Slow Insert 和中文适配项目分别执行测试与检查。消费者测试使用同级基座源码，Foundry 运行时仍使用安装后的模块路径及公共 API。
 
 ## 安装与发行
 

@@ -1,16 +1,39 @@
+// @ts-check
+/** @typedef {import('../../../types/api-v1.d.ts').IdentifiedSource} IdentifiedSource */
+/** @typedef {import('../../../types/api-v1.d.ts').ParsedCitation} ParsedCitation */
+/** @typedef {import('../../../types/api-v1.d.ts').PreparedSourceEnvironment} PreparedSourceEnvironment */
+/** @typedef {import('../../../types/api-v1.d.ts').PublicationRecord} PublicationRecord */
+/** @typedef {import('../../../types/api-v1.d.ts').RawSourceField} RawSourceField */
+/** @typedef {import('../../../types/api-v1.d.ts').RulesEdition} RulesEdition */
+/** @typedef {import('../../../types/api-v1.d.ts').SourceConfidence} SourceConfidence */
+/** @typedef {import('../../../types/api-v1.d.ts').SourceContext} SourceContext */
+/** @typedef {import('../../../types/api-v1.d.ts').SourceEnvironment} SourceEnvironment */
+/** @typedef {import('../../../types/api-v1.d.ts').SourceItemInput} SourceItemInput */
+/** @typedef {import('../../../types/api-v1.d.ts').SourceReference} SourceReference */
+/** @typedef {import('../../../types/api-v1.d.ts').SourceStatus} SourceStatus */
 import { buildPublicationCatalog, DEFAULT_PUBLICATION_CATALOG, parseCitations, isVersionNumber, publicationKey } from "./publications.mjs";
 
+/** @param {unknown} value */
 const text = value => typeof value === "string" ? value.trim() : "";
+/** @template T @param {T[]} values */
 const unique = values => [...new Set(values)];
+/** @param {ParsedCitation[]} citations */
 const known = citations => citations.filter(citation => citation.candidates.length);
+/** @param {ParsedCitation[]} citations */
 const families = citations => new Set(citations.flatMap(citation => citation.candidates.map(book => book.family)));
-const generation = value => ["2014", "2024"].includes(value) ? value : null;
+/** @param {unknown} value @returns {RulesEdition | null} */
+const generation = value => value === "2014" || value === "2024" ? value : null;
+/** @param {unknown} value */
 const pageText = value => typeof value === "number" && Number.isFinite(value) ? String(value) : text(value);
 
 /** Construct once per permitted index / provider revision, not per keystroke.
  * The cache contains only derived display data and never mutates index entries. */
+/**
+ * @param {SourceEnvironment} [environment]
+ * @returns {PreparedSourceEnvironment}
+ */
 export function prepareSourceEnvironment(environment = {}) {
-  if (environment.sourceCatalog && environment.sourceCache) return environment;
+  if (environment.sourceCatalog && environment.sourceCache) return /** @type {PreparedSourceEnvironment} */ (environment);
   const hasProviders = environment.packs || environment.modules || environment.system || environment.sourceBooks
     || environment.externalPublications || environment.publicationProviders || environment.publications;
   return { ...environment,
@@ -19,12 +42,17 @@ export function prepareSourceEnvironment(environment = {}) {
   };
 }
 
+/**
+ * @param {SourceItemInput} item
+ * @param {SourceEnvironment} [environment]
+ * @returns {SourceContext}
+ */
 export function sourceContext(item, environment = {}) {
   const external = /^@[\w]+\[/.test(item.uuid ?? "");
   const packId = item.package || item.uuid?.match(/^Compendium\.([^.]+\.[^.]+)\./)?.[1];
-  const pack = environment.packs?.get(packId), metadata = pack?.metadata;
+  const pack = packId ? environment.packs?.get(packId) : undefined, metadata = pack?.metadata;
   const pkg = metadata?.packageType === "system" ? environment.system : metadata?.packageType === "world" ? environment.world
-    : environment.modules?.get(metadata?.packageName);
+    : metadata?.packageName ? environment.modules?.get(metadata.packageName) : undefined;
   const source = item.system?.source;
   const data = source && typeof source === "object" ? source : {};
   const books = Object.keys(pkg?.flags?.dnd5e?.sourceBooks ?? {});
@@ -43,17 +71,30 @@ export function sourceContext(item, environment = {}) {
  * Explicit conflicting evidence is retained, not silently won by a priority
  * order. Containers only supply missing metadata / disambiguate the same family.
  */
+/**
+ * @param {SourceItemInput} item
+ * @param {SourceEnvironment} [environment]
+ * @returns {IdentifiedSource}
+ */
 export function identifySource(item, environment = {}) {
   const cached = environment.sourceCache?.get(item);
   if (cached) return cached;
   const prepared = prepareSourceEnvironment(environment), catalog = prepared.sourceCatalog;
   const context = sourceContext(item, prepared);
   const { external, rules, page } = context;
+  /** @param {string} value */
   const parse = value => parseCitations(value, catalog, { external });
   const book = parse(context.book), custom = parse(context.custom);
   const pack = parse(context.packBook), pkg = parse(context.packageBook);
   const bookKnown = known(book), customKnown = known(custom);
-  let citations = [], unresolved = [], basis = "document", conflict = null;
+  /** @type {ParsedCitation[]} */
+  let citations = [];
+  /** @type {string[]} */
+  let unresolved = [];
+  /** @type {'document' | 'external' | 'pack' | 'package'} */
+  let basis = "document";
+  /** @type {'edition-conflict' | 'source-conflict' | null} */
+  let conflict = null;
 
   if (external) {
     citations = parse(context.externalSource);
@@ -88,11 +129,13 @@ export function identifySource(item, environment = {}) {
     if (!citations.length && explicit) unresolved = [explicit];
   }
 
+  /** @type {SourceReference[]} */
   const references = [];
   const fallback = known(pack).length ? known(pack) : known(pkg);
   for (const citation of citations) {
     let candidates = citation.candidates;
     if (!candidates.length) { unresolved.push(citation.raw); continue; }
+    /** @type {SourceConfidence} */
     let confidence = candidates.length === 1 ? basis : "ambiguous";
     // Only contextual metadata for the SAME book family can disambiguate it.
     if (candidates.length > 1 && !external) {
@@ -112,19 +155,22 @@ export function identifySource(item, environment = {}) {
   }
   // Two explicit generations in one citation must not leak into either edition
   // filter as a confirmed implementation.
-  const editions = unique(references.flatMap(ref => ref.record?.strictRules ? [ref.record.rules] : []).filter(Boolean));
+  const editions = unique(references.flatMap(ref => ref.record?.strictRules ? [ref.record.rules] : []).filter(/** @returns {r is RulesEdition} */ r => Boolean(r)));
   if (editions.length > 1) conflict = "edition-conflict";
   const ambiguous = references.filter(ref => !ref.record);
   const ambiguousStatus = ambiguous.some(ref => new Set(ref.candidates.map(book => book.family)).size > 1) ? "ambiguous" : "edition-unknown";
+  /** @type {SourceStatus} */
   const status = conflict || (!references.length ? "unknown" : ambiguous.length ? ambiguousStatus : unresolved.length ? "partial" : "confirmed");
+  /** @type {RawSourceField[]} */
+  const raw = /** @type {RawSourceField[]} */ ([
+    ["book", context.book], ["custom", context.custom],
+    ["external", context.externalSource], ["pack", context.packBook], ["package", context.packageBook]
+  ].filter(([, value]) => value).map(([field, value]) => ({ field, value })));
   const result = {
     ...context, status, references, unresolved: unique(unresolved),
     rules: conflict === "edition-conflict" ? null : rules || (editions.length === 1 ? editions[0] : null),
     documentRules: rules,
-    raw: [
-      ["book", context.book], ["custom", context.custom],
-      ["external", context.externalSource], ["pack", context.packBook], ["package", context.packageBook]
-    ].filter(([, value]) => value).map(([field, value]) => ({ field, value }))
+    raw
   };
   prepared.sourceCache.set(item, result);
   return result;

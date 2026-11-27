@@ -1,10 +1,28 @@
+// @ts-check
 /** One running build and one latest request. Invalidation is synchronous;
  * expensive work starts in a microtask or optional debounce timer, coalescing
  * bursts without stale output. */
+/**
+ * @template {import('../../../types/api-v1.d.ts').RefreshRequestOptions} [TOptions=import('../../../types/api-v1.d.ts').RefreshRequestOptions]
+ * @param {import('../../../types/api-v1.d.ts').RefreshQueueConfig<TOptions>} config
+ * @returns {import('../../../types/api-v1.d.ts').RefreshQueue<TOptions>}
+ */
 export function createRefreshQueue({invalidate, build}) {
   let generation = 0, pending = false, immediatePending = false;
-  let running = null, pendingOptions, timer = null, idleHandle = null;
-  let delayedPromise = null, delayedResolve = null, delayedReject = null;
+  /** @type {Promise<void> | null} */
+  let running = null;
+  /** @type {TOptions | undefined} */
+  let pendingOptions;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let timer = null;
+  /** @type {number | null} */
+  let idleHandle = null;
+  /** @type {Promise<void> | null} */
+  let delayedPromise = null;
+  /** @type {(() => void) | null} */
+  let delayedResolve = null;
+  /** @type {((reason?: unknown) => void) | null} */
+  let delayedReject = null;
 
   function cancelScheduled() {
     if (timer) { clearTimeout(timer); timer = null; }
@@ -14,9 +32,11 @@ export function createRefreshQueue({invalidate, build}) {
     }
   }
 
+  /** @param {Promise<void> | null} run */
   function settleDelayed(run) {
     if (!delayedResolve) return;
-    const resolve = delayedResolve, reject = delayedReject;
+    const resolve = delayedResolve;
+    const reject = /** @type {(reason?: unknown) => void} */ (delayedReject);
     delayedPromise = delayedResolve = delayedReject = null;
     if (run) run.then(resolve, reject);
     else resolve();
@@ -45,7 +65,7 @@ export function createRefreshQueue({invalidate, build}) {
       generation++;
       pending = true;
       pendingOptions = options;
-      const requestedDelay = Number.isFinite(options?.delay) && options.delay > 0 ? options.delay : 0;
+      const requestedDelay = typeof options?.delay === 'number' && Number.isFinite(options.delay) && options.delay > 0 ? options.delay : 0;
       const immediate = requestedDelay === 0 || Boolean(options?.retract) || immediatePending;
       invalidate(options);
       if (immediate) {
@@ -66,7 +86,7 @@ export function createRefreshQueue({invalidate, build}) {
         timer = null;
         if (!pending) { settleDelayed(null); return; }
         if (pendingOptions?.idle && typeof globalThis.requestIdleCallback === 'function') {
-          const timeout = Number.isFinite(pendingOptions.idleTimeout) && pendingOptions.idleTimeout > 0
+          const timeout = typeof pendingOptions?.idleTimeout === 'number' && Number.isFinite(pendingOptions.idleTimeout) && pendingOptions.idleTimeout > 0
             ? pendingOptions.idleTimeout : 1500;
           let fired = false;
           const handle = globalThis.requestIdleCallback(() => {

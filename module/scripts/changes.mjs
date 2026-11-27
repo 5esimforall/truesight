@@ -1,31 +1,55 @@
+// @ts-check
+/** @typedef {import('../../types/api-v1.d.ts').ChangeDomain} ChangeDomain */
+/** @typedef {import('../../types/api-v1.d.ts').DomainChangeEvent} DomainChangeEvent */
 import {DOCUMENT_TYPES} from './catalog/item-identity.mjs';
 
 /** Public notifications describe affected domains, never changed document IDs. */
+/** @type {readonly ChangeDomain[]} */
 export const ALL_CHANGES = Object.freeze(['identity', 'names', 'access', 'sources', 'review', 'display']);
+/** @type {readonly string[]} */
 export const INDEXED_DOCUMENT_TYPES = Object.freeze(['Item', ...DOCUMENT_TYPES]);
 const INDEXED_SET = new Set(INDEXED_DOCUMENT_TYPES);
 const HAN = /\p{Script=Han}/u;
 const OWNER_ITEM_TYPES = new Set(['class', 'subclass', 'race', 'background']);
 
+/**
+ * @param {DomainChangeEvent | null | undefined} change
+ * @param {readonly ChangeDomain[]} domains
+ * @returns {boolean}
+ */
 export function affects(change, domains) {
   if (!Array.isArray(change?.changes)) throw new TypeError('Expected a domain-tagged change notification');
-  return domains.some(domain => change.changes.includes(domain));
+  const present = change.changes;
+  return domains.some(domain => present.includes(domain));
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} [prefix]
+ * @returns {string[]}
+ */
 function paths(value, prefix = '') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [prefix];
   const entries = Object.entries(value);
   if (!entries.length) return [prefix];
   return entries.flatMap(([key, child]) => paths(child, [prefix, key.replace(/(^|\.)-=/g, '$1')].filter(Boolean).join('.')));
 }
+/** @type {(a: string, b: string) => boolean} */
 const overlaps = (a, b) => a === b || a.startsWith(b + '.') || b.startsWith(a + '.');
+/** @param {string} event */
 const eventDocumentType = event => {
   const match = event.match(/^(?:create|update|delete)(.+)$/);
   return match ? match[1] : null;
 };
+/** @param {any} document */
 const isOwnerItem = document => OWNER_ITEM_TYPES.has(document?.type);
+/** @param {any} item */
 const hasHanName = item => typeof item?.name === 'string' && HAN.test(item.name);
 
+/**
+ * @param {any} actor
+ * @returns {string | null}
+ */
 export function effectiveActorType(actor) {
   if (!actor || typeof actor !== 'object') return null;
   const items = typeof actor.items?.values === 'function' ? actor.items.values()
@@ -36,23 +60,34 @@ export function effectiveActorType(actor) {
   return typeof actor.type === 'string' && actor.type ? actor.type : null;
 }
 
+/**
+ * @param {any} actor
+ * @returns {boolean}
+ */
 export function isNonCharacterActor(actor) {
   const type = effectiveActorType(actor);
   return type !== null && type !== 'character';
 }
 
+/** @param {any} document */
 function isWorldSidebarFolder(document) {
   return Boolean(document && typeof document === 'object' && !document.pack
     && typeof document.type === 'string' && document.type !== 'Compendium' && INDEXED_SET.has(document.type));
 }
+/** @param {any} document */
 function isCompendiumItemFolder(document) {
   return Boolean(document?.pack && document?.type === 'Item');
 }
+/** @param {any} document */
 function isNonItemCompendiumFolder(document) {
   return Boolean(document?.pack && typeof document?.type === 'string'
     && document.type !== 'Item' && document.type !== 'Compendium');
 }
 
+/**
+ * @param {any} actor
+ * @returns {boolean | null}
+ */
 function actorHasHanItems(actor) {
   if (actor?.items == null) return null;
   const items = typeof actor.items.values === 'function' ? actor.items.values()
@@ -62,6 +97,10 @@ function actorHasHanItems(actor) {
   return false;
 }
 
+/**
+ * @param {any} document
+ * @returns {boolean}
+ */
 export function isTokenDocument(document) {
   if (!document || typeof document !== 'object') return false;
   if (document.isToken === true || document.parent?.isToken === true
@@ -69,6 +108,11 @@ export function isTokenDocument(document) {
   return typeof document.uuid === 'string' && /^Scene\.[^.]+\.Token\./.test(document.uuid);
 }
 
+/**
+ * @param {string} event
+ * @param {any} document
+ * @returns {boolean}
+ */
 export function isEmbeddedActorItem(event, document) {
   if (!/^(?:create|update|delete)Item$/.test(event)) return false;
   if (!document || typeof document !== 'object' || document.pack || document.parent?.pack) return false;
@@ -78,10 +122,21 @@ export function isEmbeddedActorItem(event, document) {
     || (typeof document.parent.uuid === 'string' && document.parent.uuid.startsWith('Actor.'))));
 }
 
+/**
+ * @param {string} event
+ * @param {any} document
+ * @returns {boolean}
+ */
 function isEmbeddedJournalPage(event, document) {
   return /^(?:create|update|delete)JournalEntryPage$/.test(event) && !document?.pack && !document?.parent?.pack;
 }
 
+/**
+ * @param {string} event
+ * @param {any} document
+ * @param {{ indexedTypes?: Set<string> }} [options]
+ * @returns {boolean}
+ */
 export function isLocalDocumentChange(event, document, {indexedTypes} = {}) {
   const type = eventDocumentType(event);
   if (!type || (!INDEXED_SET.has(type) && !indexedTypes?.has(type))) return false;
@@ -93,6 +148,13 @@ export function isLocalDocumentChange(event, document, {indexedTypes} = {}) {
 
 /** Accept Foundry's nested, dotted and deletion updates. Missing deltas are
  * conservatively relevant; known unrelated fields never invalidate evidence. */
+/**
+ * @param {string} event
+ * @param {any} document
+ * @param {any} delta
+ * @param {{ userId?: string, embeddedIndexing?: boolean, indexedTypes?: Set<string> }} [options]
+ * @returns {ChangeDomain[]}
+ */
 export function classifyChange(event, document, delta, {userId, embeddedIndexing = false, indexedTypes} = {}) {
   if (event === 'updateSetting') {
     const key = document?.key ?? delta?.key;
@@ -115,7 +177,9 @@ export function classifyChange(event, document, delta, {userId, embeddedIndexing
     if (!event.startsWith('update')) return ['names', 'access'];
     if (!delta || typeof delta !== 'object' || Array.isArray(delta)) return [...ALL_CHANGES];
     const fields = paths(delta).filter(path => path && path !== '_id');
+    /** @param {...string} keys */
     const has = (...keys) => fields.some(path => keys.some(key => overlaps(path, key)));
+    /** @type {Set<ChangeDomain>} */
     const result = new Set();
     if (has('ownership', 'permission', 'visible')) result.add('access');
     if (has('name', 'type', 'sorting')) result.add('names');
@@ -138,6 +202,7 @@ export function classifyChange(event, document, delta, {userId, embeddedIndexing
       }
       if (!delta || typeof delta !== 'object' || Array.isArray(delta)) return ['names'];
       const fields = paths(delta).filter(path => path && path !== '_id');
+      /** @param {...string} keys */
       const has = (...keys) => fields.some(path => keys.some(key => overlaps(path, key)));
       if (!has('name', 'originalName', 'flags.babele', 'flags.chris-premades.info', 'flags.gambits-premades.gpsUuid',
         'type', 'system.identifier', 'system.source', 'system.type')) return [];
@@ -168,12 +233,14 @@ export function classifyChange(event, document, delta, {userId, embeddedIndexing
     return [...ALL_CHANGES];
   }
   const fields = paths(delta).filter(path => path && path !== '_id');
+  /** @param {...string} keys */
   const has = (...keys) => fields.some(path => keys.some(key => overlaps(path, key)));
   if (event === 'updateUser') {
     return (!document?.id || !userId || document.id === userId) && has('role', 'permissions') ? ['access'] : [];
   }
   if (event === 'updateCompendium') return [...ALL_CHANGES];
   const local = isLocalDocumentChange(event, document, {indexedTypes});
+  /** @type {Set<ChangeDomain>} */
   const result = new Set();
   if (has('ownership', 'permission', 'visible')) result.add('access');
   if (event === 'updateItem' && !local && has('folder')) result.add('names');

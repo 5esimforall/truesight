@@ -1,3 +1,10 @@
+// @ts-check
+/** @typedef {import('../../../types/api-v1.d.ts').CorpusItemRow} CorpusItemRow */
+/** @typedef {import('../../../types/api-v1.d.ts').PackIndexLike} PackIndexLike */
+/** @typedef {import('../../../types/api-v1.d.ts').PackMapLike} PackMapLike */
+/** @typedef {import('../../../types/api-v1.d.ts').TitleIndex} TitleIndex */
+/** @typedef {import('../../../types/api-v1.d.ts').NamePair} NamePair */
+
 export const TRANSLATION_MODULE = 'dnd-simplified-chinese-babele-patch';
 
 // Reviewed Item dictionaries, not Actor names, journal titles or nested text.
@@ -10,8 +17,15 @@ export const BASE_ITEM_PACKS = Object.freeze([
 ]);
 
 const han = /\p{Script=Han}/u;
+/** @param {unknown} value @returns {value is string} */
 const english = value => typeof value === 'string' && /[A-Za-z]/.test(value) && !han.test(value);
 
+/**
+ * @param {string} key
+ * @param {PackIndexLike | null | undefined} index
+ * @param {Set<string>} knownNames
+ * @returns {string | null}
+ */
 function originalName(key, index, knownNames) {
   const row = index?.get?.(key);
   if (row) {
@@ -24,21 +38,32 @@ function originalName(key, index, knownNames) {
   return english(key) ? key : null;
 }
 
+/**
+ * @param {string} packId
+ * @param {Record<string, unknown> | undefined} titles
+ * @param {PackIndexLike | null | undefined} index
+ * @param {Set<string>} knownNames
+ * @returns {NamePair[]}
+ */
 export function readNamePairs(packId, titles, index, knownNames) {
   if (!titles || typeof titles !== 'object' || Array.isArray(titles)) {
     throw Object.assign(new TypeError('Expected a Babele titles object'), {source: packId});
   }
+  /** @type {Map<string | undefined, CorpusItemRow[]>} */
   const byOriginal = new Map();
   for (const row of index?.values() ?? []) {
     const original = row.flags?.babele?.originalName ?? row.originalName ?? row.name;
-    if (!byOriginal.has(original)) byOriginal.set(original, []);
-    byOriginal.get(original).push(row);
+    let list = byOriginal.get(original);
+    if (!list) { list = []; byOriginal.set(original, list); }
+    list.push(row);
   }
+  /** @type {NamePair[]} */
   const pairs = [];
   for (const [key, translatedName] of Object.entries(titles)) {
     if (typeof translatedName !== 'string' || !han.test(translatedName)) continue;
     const englishName = originalName(key, index, knownNames);
-    const rows = index?.get?.(key) ? [index.get(key)] : byOriginal.get(key) ?? [null];
+    const direct = index?.get?.(key);
+    const rows = direct ? [direct] : byOriginal.get(key) ?? [null];
     for (const row of rows) {
       const category = row?.type === 'feat' && typeof row.system?.type?.value === 'string' && row.system.type.value.trim()
         ? row.system.type.value.trim() : undefined;
@@ -52,6 +77,13 @@ export function readNamePairs(packId, titles, index, knownNames) {
   return pairs;
 }
 
+/**
+ * @param {PackMapLike} packs
+ * @param {TitleIndex | null} titleIndex
+ * @param {Set<string>} knownNames
+ * @param {readonly string[]} [extraPackIds]
+ * @returns {NamePair[]}
+ */
 export function collectNamePairs(packs, titleIndex, knownNames, extraPackIds = []) {
   // Missing optional translator is distinct from a failed/incomplete dictionary.
   // Independent indexed originals and bilingual names remain usable.
@@ -63,6 +95,7 @@ export function collectNamePairs(packs, titleIndex, knownNames, extraPackIds = [
     const pack = packs.get(packId);
     if (pack?.visible && pack.documentName === 'Item') sources.add(packId);
   }
+  /** @type {NamePair[]} */
   const pairs = [];
   for (const packId of sources) {
     const pack = packs.get(packId);

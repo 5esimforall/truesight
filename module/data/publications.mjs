@@ -9,6 +9,7 @@ const core = (family, title, aliases, editions) => editions.map(([id, label, yea
 }));
 const book = (id, label, title, aliases = [], extra = {}) => ({ id, label, title, aliases, ...extra });
 
+/** @type {readonly import('../types/api-v1.d.ts').PublicationInput[]} */
 export const PUBLICATIONS = Object.freeze([
   ...core("phb", "Player's Handbook", ["Players Handbook", "玩家手册"], [
     ["phb14", "PHB'14", 2014, "2014", ["PHB 2014", "PHB14"], ["PHB"]],

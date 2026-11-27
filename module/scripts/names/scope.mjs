@@ -1,3 +1,12 @@
+// @ts-check
+/** @typedef {import('../../../types/api-v1.d.ts').RulesEdition} RulesEdition */
+/** @typedef {import('../../../types/api-v1.d.ts').AliasScope} AliasScope */
+/** @typedef {import('../../../types/api-v1.d.ts').ScopeEvidence} ScopeEvidence */
+
+/**
+ * @param {unknown} rules
+ * @returns {RulesEdition | null}
+ */
 export function rulesEdition(rules) {
   if (rules === 'legacy' || rules === '2014') return '2014';
   if (rules === 'modern' || rules === '2024') return '2024';
@@ -5,6 +14,11 @@ export function rulesEdition(rules) {
 }
 
 // Missing context remains uncertain evidence, not an invented edition/type.
+/**
+ * @param {ScopeEvidence} evidence
+ * @param {AliasScope | null | undefined} scope
+ * @returns {boolean}
+ */
 export function inScope(evidence, scope) {
   if (!scope) return true;
   const rules = rulesEdition(evidence.rules);
